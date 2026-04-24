@@ -1,0 +1,174 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: users
+    // Fields: name (string), surname (string), email (string), role (string: STUDENT|TEACHER|admin), is_confirmed (number)
+    //
+    // Collection: classes
+    // Fields: name (string), code (string), admin_id (string)
+    //
+    // Collection: class_members
+    // Fields: class_id (string), user_id (string), status (string: PENDING|CONFIRMED|REFUSED)
+    //
+    // Collection: messages
+    // Fields: sender_id (string), receiver_id (string), class_id (string), chat_type (string: PRIVATE|CLASS|SCHOOL), content (string)
+    //
+    // Collection: notifications
+    // Fields: user_id (string), title (string), content (string), is_read (bool)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (getUserData().role == 'admin' ||
+          (request.auth.token.email == "florianloka3@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isTeacher() {
+      return isAuthenticated() && getUserData().role == 'TEACHER';
+    }
+
+    function isClassAdmin(classId) {
+      return isAuthenticated() && get(/databases/$(database)/documents/classes/$(classId)).data.admin_id == request.auth.uid;
+    }
+
+    function isValidEmail(email) {
+      return email is string && email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasOnlyAllowedFields(allowedFields) {
+      return request.resource.data.keys().hasOnly(allowedFields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidUser(data) {
+      return hasOnlyAllowedFields(['id', 'name', 'surname', 'email', 'role', 'program', 'year', 'group_name', 'study_type', 'phone', 'is_confirmed', 'profile_photo', 'created_at']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.email is string && isValidEmail(data.email) &&
+             data.role in ['STUDENT', 'TEACHER', 'admin'];
+    }
+
+    function isValidClass(data) {
+      return hasOnlyAllowedFields(['id', 'name', 'code', 'department', 'year', 'group_name', 'study_type', 'admin_id']) &&
+             data.name is string && data.name.size() > 0 &&
+             data.code is string && data.code.size() > 0;
+    }
+
+    function isValidMessage(data) {
+      return hasOnlyAllowedFields(['sender_id', 'receiver_id', 'class_id', 'chat_type', 'content', 'timestamp', 'file_url', 'file_name', 'file_type']) &&
+             data.sender_id == request.auth.uid &&
+             data.content is string && data.content.size() <= 5000 &&
+             data.chat_type in ['PRIVATE', 'CLASS', 'SCHOOL'];
+    }
+
+    function isValidNotification(data) {
+      return hasOnlyAllowedFields(['user_id', 'title', 'content', 'type', 'is_read', 'created_at']) &&
+             data.user_id is string &&
+             data.title is string && data.title.size() <= 200 &&
+             data.content is string && data.content.size() <= 1000;
+    }
+
+    function isValidPersonalNote(data) {
+      return hasOnlyAllowedFields(['user_id', 'title', 'content', 'color', 'is_pinned', 'created_at', 'updated_at']) &&
+             data.user_id == request.auth.uid &&
+             data.content is string && data.content.size() <= 10000;
+    }
+
+    function isValidBook(data) {
+      return hasOnlyAllowedFields(['id', 'title', 'author', 'file_path', 'external_link', 'uploader_id', 'class_id', 'created_at']) &&
+             data.id is string && data.title is string && data.title.size() > 0 &&
+             data.uploader_id == request.auth.uid;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin() || isTeacher();
+      allow create: if isOwner(userId) && isValidUser(request.resource.data) && 
+                      (request.resource.data.role != 'admin' || isAdmin());
+      allow update: if (isOwner(userId) || isAdmin()) && isValidUser(request.resource.data) &&
+                      (request.resource.data.role == resource.data.role || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    match /classes/{classId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || isTeacher();
+    }
+
+    match /class_members/{memberId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && request.resource.data.user_id == request.auth.uid;
+      allow update, delete: if isAdmin() || isTeacher() || isClassAdmin(resource.data.class_id);
+    }
+
+    match /messages/{messageId} {
+      allow read: if isAuthenticated() && (
+        resource.data.sender_id == request.auth.uid || 
+        resource.data.receiver_id == request.auth.uid || 
+        resource.data.chat_type in ['CLASS', 'SCHOOL']
+      );
+      allow create: if isAuthenticated() && isValidMessage(request.resource.data);
+    }
+
+    match /notifications/{notificationId} {
+      allow read, update, delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+      allow create: if isAuthenticated() && isValidNotification(request.resource.data);
+    }
+
+    match /schedules/{scheduleId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || isTeacher() || 
+                    (request.resource != null && isClassAdmin(request.resource.data.class_id)) ||
+                    (resource != null && isClassAdmin(resource.data.class_id));
+    }
+
+    match /teacher_schedule/{scheduleId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() || isTeacher();
+    }
+    
+    match /personal_notes/{noteId} {
+      allow read, delete: if isAuthenticated() && resource.data.user_id == request.auth.uid;
+      allow create: if isAuthenticated() && isValidPersonalNote(request.resource.data);
+      allow update: if isAuthenticated() && resource.data.user_id == request.auth.uid && isValidPersonalNote(request.resource.data);
+    }
+    
+    match /library_books/{bookId} {
+      allow read: if isAuthenticated();
+      allow create: if (isTeacher() || isClassAdmin(request.resource.data.class_id)) && isValidBook(request.resource.data);
+      allow update, delete: if isTeacher() || isClassAdmin(resource.data.class_id) || isAdmin();
+    }
+
+    // Default deny
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}

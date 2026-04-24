@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "functions": {
+    "server.ts": {
+      "runtime": "@vercel/node",
+      "memory": 1024
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/server.ts"
+    },
+    {
+      "source": "/socket.io/(.*)",
+      "destination": "/server.ts"
+    },
+    {
+      "source": "/uploads/(.*)",
+      "destination": "/server.ts"
+    }
+  ],
+  "cleanUrls": true,
+  "trailingSlash": false
+}

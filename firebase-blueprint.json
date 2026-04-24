@@ -1,0 +1,162 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "surname": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["STUDENT", "TEACHER"] },
+        "program": { "type": "string" },
+        "year": { "type": "string" },
+        "group_name": { "type": "string" },
+        "study_type": { "type": "string" },
+        "phone": { "type": "string" },
+        "is_confirmed": { "type": "number" },
+        "profile_photo": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "name", "email", "role"]
+    },
+    "Class": {
+      "title": "Class",
+      "description": "Classroom information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "department": { "type": "string" },
+        "year": { "type": "string" },
+        "group_name": { "type": "string" },
+        "study_type": { "type": "string" },
+        "admin_id": { "type": "string" }
+      },
+      "required": ["id", "name", "code"]
+    },
+    "ClassMember": {
+      "title": "ClassMember",
+      "description": "Mapping of users to classes",
+      "type": "object",
+      "properties": {
+        "class_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "status": { "type": "string", "enum": ["PENDING", "CONFIRMED", "REFUSED"] },
+        "joined_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["class_id", "user_id", "status"]
+    },
+    "Schedule": {
+      "title": "Schedule",
+      "description": "Class schedule entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "class_id": { "type": "string" },
+        "teacher_id": { "type": "string" },
+        "subject": { "type": "string" },
+        "day": { "type": "string" },
+        "start_time": { "type": "string" },
+        "end_time": { "type": "string" },
+        "room": { "type": "string" }
+      },
+      "required": ["id", "class_id", "teacher_id", "subject", "day"]
+    },
+    "Message": {
+      "title": "Message",
+      "description": "Chat message",
+      "type": "object",
+      "properties": {
+        "sender_id": { "type": "string" },
+        "receiver_id": { "type": "string" },
+        "class_id": { "type": "string" },
+        "chat_type": { "type": "string", "enum": ["PRIVATE", "CLASS", "SCHOOL"] },
+        "content": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["sender_id", "content", "chat_type"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "User notification",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "type": { "type": "string" },
+        "is_read": { "type": "boolean" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "title", "content"]
+    },
+    "PersonalNote": {
+      "title": "PersonalNote",
+      "description": "Student's personal note",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "color": { "type": "string" },
+        "is_pinned": { "type": "boolean" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "content"]
+    },
+    "Book": {
+      "title": "Book",
+      "description": "Digital library book",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "author": { "type": "string" },
+        "file_path": { "type": "string" },
+        "external_link": { "type": "string" },
+        "uploader_id": { "type": "string" },
+        "class_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "title", "uploader_id", "class_id"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/classes/{classId}": {
+      "schema": "Class",
+      "description": "Classrooms"
+    },
+    "/class_members/{memberId}": {
+      "schema": "ClassMember",
+      "description": "Class membership records"
+    },
+    "/schedules/{scheduleId}": {
+      "schema": "Schedule",
+      "description": "Class schedules"
+    },
+    "/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Chat messages"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notifications"
+    },
+    "/personal_notes/{noteId}": {
+      "schema": "PersonalNote",
+      "description": "Personal student notes"
+    },
+    "/library_books/{bookId}": {
+      "schema": "Book",
+      "description": "Digital library materials"
+    }
+  }
+}
