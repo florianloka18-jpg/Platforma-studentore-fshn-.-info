@@ -495,6 +495,46 @@ export const initDb = async () => {
     FOREIGN KEY(user_id) REFERENCES users(id)
   );
 
+  CREATE TABLE IF NOT EXISTS activity_likes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id INTEGER,
+    user_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(activity_id) REFERENCES performance_logs(id),
+    FOREIGN KEY(user_id) REFERENCES users(id),
+    UNIQUE(activity_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS activity_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id INTEGER,
+    user_id INTEGER,
+    content TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(activity_id) REFERENCES performance_logs(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS activity_favorites (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    activity_id INTEGER,
+    user_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(activity_id) REFERENCES performance_logs(id),
+    FOREIGN KEY(user_id) REFERENCES users(id),
+    UNIQUE(activity_id, user_id)
+  );
+
+  CREATE TABLE IF NOT EXISTS comment_likes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    comment_id INTEGER,
+    user_id INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY(comment_id) REFERENCES activity_comments(id),
+    FOREIGN KEY(user_id) REFERENCES users(id),
+    UNIQUE(comment_id, user_id)
+  );
+
   CREATE TABLE IF NOT EXISTS email_verifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     email TEXT NOT NULL,
@@ -2081,28 +2121,34 @@ const notifyUser = async (userId: string|number, title: string, content: string,
           const filteredPendingAs = allPendingAs.filter((s: any) => teacherAssignmentIds.includes(s.assignment_id?.toString()));
           const filteredPendingTs = allPendingTs.filter((s: any) => teacherTestIds.includes(s.test_id?.toString()));
 
-          // Augment with student names and titles
-          const pendingSubmissionsList = [];
+          // Augment with student names and titles in parallel
+          const pendingSubmissionsList = await Promise.all(
+            [...filteredPendingAs.map(x => ({...x, type: 'ASSIGNMENT'})), ...filteredPendingTs.map(x => ({...x, type: 'TEST'}))]
+              .map(async (s) => {
+                try {
+                  const studentDoc = await firestore.collection('users').doc(s.student_id?.toString() || s.user_id?.toString()).get();
+                  const studentData = studentDoc.data();
+                  const targetDoc = s.type === 'ASSIGNMENT' 
+                    ? teacherAssignmentsSnap.docs.find(d => d.id === s.assignment_id?.toString())
+                    : teacherTestsSnap.docs.find(d => d.id === s.test_id?.toString());
+                  
+                  return {
+                    id: s.id,
+                    type: s.type,
+                    target_id: s.assignment_id || s.test_id,
+                    submitted_at: s.submitted_at || s.timestamp || s.end_time,
+                    student_name: studentData ? `${studentData.name} ${studentData.surname || ''}` : 'Student i panjohur',
+                    title: targetDoc?.data().title || 'E panjohur',
+                    is_late: s.is_late
+                  };
+                } catch (e) {
+                  console.error("Error fetching student/target doc for submission:", s.id, e);
+                  return null;
+                }
+              })
+          );
           
-          for (const s of [...filteredPendingAs.map(x => ({...x, type: 'ASSIGNMENT'})), ...filteredPendingTs.map(x => ({...x, type: 'TEST'}))]) {
-            const studentDoc = await firestore.collection('users').doc(s.student_id?.toString() || s.user_id?.toString()).get();
-            const studentData = studentDoc.data();
-            const targetDoc = s.type === 'ASSIGNMENT' 
-              ? teacherAssignmentsSnap.docs.find(d => d.id === s.assignment_id?.toString())
-              : teacherTestsSnap.docs.find(d => d.id === s.test_id?.toString());
-            
-            pendingSubmissionsList.push({
-              id: s.id,
-              type: s.type,
-              target_id: s.assignment_id || s.test_id,
-              submitted_at: s.submitted_at || s.timestamp || s.end_time,
-              student_name: studentData ? `${studentData.name} ${studentData.surname || ''}` : 'Student i panjohur',
-              title: targetDoc?.data().title || 'E panjohur',
-              is_late: s.is_late
-            });
-          }
-          
-          pendingSubmissions = pendingSubmissionsList;
+          pendingSubmissions = pendingSubmissionsList.filter(Boolean);
           
           notifications = notifsSnap.docs
             .map(doc => {
@@ -2219,7 +2265,76 @@ const notifyUser = async (userId: string|number, title: string, content: string,
       }
 
       // 3. Analytics
-      if (!firestore) {
+      if (firestore) {
+        try {
+          const logsSnap = await firestore.collection('performance_logs')
+            .orderBy('timestamp', 'desc')
+            .limit(100)
+            .get();
+          
+          const logs = await Promise.all(logsSnap.docs.map(async doc => {
+             const logId = doc.id;
+             const d = doc.data();
+             const [likesSnap, commentsSnap, myLikeDoc, myFavoriteDoc] = await Promise.all([
+               firestore.collection('performance_logs').doc(logId).collection('likes').get(),
+               firestore.collection('performance_logs').doc(logId).collection('comments').get(),
+               firestore.collection('performance_logs').doc(logId).collection('likes').doc(req.user.id.toString()).get(),
+               firestore.collection('performance_logs').doc(logId).collection('favorites').doc(req.user.id.toString()).get()
+             ]);
+
+             return { 
+               id: logId, 
+               ...d,
+               likes_count: likesSnap.size,
+               comments_count: commentsSnap.size,
+               is_liked: myLikeDoc.exists,
+               is_favorite: myFavoriteDoc.exists,
+               timestamp: d.timestamp?.toDate?.() ? d.timestamp.toDate().toISOString() : d.timestamp
+             };
+          }));
+
+          const testsSnap = await firestore.collection('tests')
+            .where('teacher_id', '==', req.user.id.toString())
+            .where('status', '==', 'ACTIVE')
+            .get();
+
+          // Calculate monthly progress
+          const monthlyProgress: { [key: string]: { sum: number, count: number } } = {};
+          let totalSum = 0;
+          let totalCount = 0;
+
+          logs.forEach(log => {
+            if (log.score !== undefined && log.max_score > 0) {
+              const perf = Number(log.score) / Number(log.max_score);
+              totalSum += perf;
+              totalCount++;
+
+              const date = new Date(log.timestamp);
+              const monthKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+              if (!monthlyProgress[monthKey]) monthlyProgress[monthKey] = { sum: 0, count: 0 };
+              monthlyProgress[monthKey].sum += perf;
+              monthlyProgress[monthKey].count++;
+            }
+          });
+
+          const classProgress = Object.entries(monthlyProgress)
+            .map(([month, data]) => ({ month, avg_perf: data.sum / data.count }))
+            .sort((a, b) => a.month.localeCompare(b.month));
+
+          const averageScore = totalCount > 0 ? (totalSum / totalCount) * 100 : 85;
+          
+          stats = { 
+            averageScore, 
+            classProgress: classProgress.length > 0 ? classProgress : [{ month: new Date().toISOString().slice(0, 7), avg_perf: averageScore / 100 }], 
+            topImprovers: [], 
+            logs: logs.slice(0, 10), 
+            activeTestsCount: testsSnap.size 
+          };
+        } catch (e) {
+          console.error("Teacher dashboard analytics error:", e);
+          stats = { averageScore: 0, classProgress: [], topImprovers: [], logs: [], activeTestsCount: 0 };
+        }
+      } else {
         const topImprovers = db.prepare(`
           SELECT u.id, u.name, u.surname, AVG(CAST(score AS FLOAT)/max_score) as avg_perf 
           FROM performance_logs pl
@@ -2233,7 +2348,15 @@ const notifyUser = async (userId: string|number, title: string, content: string,
           GROUP BY month ORDER BY month ASC
         `).all() as any[];
 
-        const logs = db.prepare("SELECT * FROM performance_logs ORDER BY timestamp DESC LIMIT 20").all();
+        const logs = db.prepare(`
+          SELECT pl.*, 
+                 (SELECT COUNT(*) FROM activity_likes WHERE activity_id = pl.id) as likes_count,
+                 (SELECT COUNT(*) FROM activity_comments WHERE activity_id = pl.id) as comments_count,
+                 EXISTS(SELECT 1 FROM activity_likes WHERE activity_id = pl.id AND user_id = ?) as is_liked,
+                 EXISTS(SELECT 1 FROM activity_favorites WHERE activity_id = pl.id AND user_id = ?) as is_favorite
+          FROM performance_logs pl 
+          ORDER BY timestamp DESC LIMIT 20
+        `).all(req.user.id, req.user.id);
         const activeTests = db.prepare("SELECT COUNT(*) as count FROM tests WHERE teacher_id = ? AND status = 'ACTIVE'").get(req.user.id) as any;
         
         const averageScore = classProgress.reduce((acc, curr) => acc + curr.avg_perf, 0) / (classProgress.length || 1);
@@ -2331,8 +2454,140 @@ const notifyUser = async (userId: string|number, title: string, content: string,
     try {
       // 1. Stats & Analytics
       let stats = null;
-      if (!firestore) {
-        const logs = db.prepare("SELECT * FROM performance_logs WHERE user_id = ? ORDER BY timestamp DESC").all(req.user.id);
+      if (firestore) {
+        try {
+          const userIdStr = req.user.id.toString();
+          const userIdNum = parseInt(req.user.id);
+
+          const ids = [userIdStr, userIdNum].filter(v => typeof v !== 'undefined' && v !== null && !isNaN(v as any));
+          
+          let logs: any[] = [];
+          let perfLogs: any[] = [];
+          if (ids.length > 0) {
+            const [logsSnap, assignmentsSnap, testsSnap] = await Promise.all([
+              firestore.collection('performance_logs').where('user_id', 'in', ids).get(),
+              firestore.collection('assignments')
+                .where('status', '==', 'PUBLISHED')
+                .where('program', '==', (req.user.program || '').trim().toUpperCase())
+                .where('year', '==', (req.user.year || '').trim().toUpperCase())
+                .get(),
+              firestore.collection('tests')
+                .where('status', '==', 'ACTIVE')
+                .where('program', '==', (req.user.program || '').trim().toUpperCase())
+                .where('year', '==', (req.user.year || '').trim().toUpperCase())
+                .get()
+            ]);
+            
+            perfLogs = await Promise.all(logsSnap.docs.map(async doc => {
+               const logId = doc.id;
+               const d = doc.data();
+               const [likesSnap, commentsSnap, myLikeDoc, myFavoriteDoc] = await Promise.all([
+                 firestore.collection('performance_logs').doc(logId).collection('likes').get(),
+                 firestore.collection('performance_logs').doc(logId).collection('comments').get(),
+                 firestore.collection('performance_logs').doc(logId).collection('likes').doc(req.user.id.toString()).get(),
+                 firestore.collection('performance_logs').doc(logId).collection('favorites').doc(req.user.id.toString()).get()
+               ]);
+
+               return { 
+                 id: logId, 
+                 ...d,
+                 likes_count: likesSnap.size,
+                 comments_count: commentsSnap.size,
+                 is_liked: myLikeDoc.exists,
+                 is_favorite: myFavoriteDoc.exists,
+                 timestamp: d.timestamp?.toDate?.() ? d.timestamp.toDate().toISOString() : d.timestamp
+               };
+            }));
+
+            // Map assignments to log items
+            const assignmentLogs = assignmentsSnap.docs.map(doc => {
+              const d = doc.data();
+              return {
+                id: doc.id,
+                type: 'ASSIGNMENT_PUBLISHED',
+                title: d.title,
+                score: null,
+                max_score: d.max_points || 100,
+                timestamp: d.created_at?.toDate?.() ? d.created_at.toDate().toISOString() : (d.created_at || new Date().toISOString())
+              };
+            });
+
+            // Map tests to log items
+            const testLogs = testsSnap.docs.map(doc => {
+              const d = doc.data();
+              return {
+                id: doc.id,
+                type: 'TEST_PUBLISHED',
+                title: d.title,
+                score: null,
+                max_score: 100,
+                timestamp: d.created_at?.toDate?.() ? d.created_at.toDate().toISOString() : (d.created_at || new Date().toISOString())
+              };
+            });
+
+            logs = [...perfLogs, ...assignmentLogs, ...testLogs];
+
+            // Sort in memory
+            logs.sort((a, b) => {
+              const tA = new Date(a.timestamp).getTime();
+              const tB = new Date(b.timestamp).getTime();
+              return tB - tA;
+            });
+            logs = logs.slice(0, 50);
+
+            let attendance: any[] = [];
+            const attendanceSnap = await firestore.collection('attendance')
+              .where('user_id', 'in', ids)
+              .get();
+
+            const attendanceData = attendanceSnap.docs.map(doc => doc.data());
+            attendance = [
+              { status: 'PRESENT', count: attendanceData.filter(a => a.status === 'PRESENT').length },
+              { status: 'ABSENT', count: attendanceData.filter(a => a.status === 'ABSENT').length }
+            ];
+
+            // Calculate summary stats
+            let totalScore = 0;
+            let totalMax = 0;
+            perfLogs.forEach(log => {
+              if (log.score !== null && log.score !== undefined) {
+                totalScore += Number(log.score);
+                totalMax += Number(log.max_score || 10);
+              }
+            });
+
+            const averageScore = totalMax > 0 ? (totalScore / totalMax) * 10 : 0;
+            const totalPoints = totalScore;
+            const activitiesCount = perfLogs.length;
+            const presentCount = attendanceData.filter(a => a.status === 'PRESENT').length;
+            const totalAttendance = attendanceData.length;
+            const attendanceRate = totalAttendance > 0 ? (presentCount / totalAttendance) * 100 : 0;
+
+            stats = { 
+              logs, 
+              attendance,
+              averageScore: parseFloat(averageScore.toFixed(1)),
+              totalPoints,
+              activitiesCount,
+              attendanceRate: Math.round(attendanceRate)
+            };
+          }
+        } catch (err) {
+          console.error("Firestore dashboard stats error:", err);
+          // Fallback to empty stats if Firestore fails
+          stats = { logs: [], attendance: [] };
+        }
+      } else {
+        const logs = db.prepare(`
+          SELECT pl.*, 
+                 (SELECT COUNT(*) FROM activity_likes WHERE activity_id = pl.id) as likes_count,
+                 (SELECT COUNT(*) FROM activity_comments WHERE activity_id = pl.id) as comments_count,
+                 EXISTS(SELECT 1 FROM activity_likes WHERE activity_id = pl.id AND user_id = ?) as is_liked,
+                 EXISTS(SELECT 1 FROM activity_favorites WHERE activity_id = pl.id AND user_id = ?) as is_favorite
+          FROM performance_logs pl 
+          WHERE user_id = ? 
+          ORDER BY timestamp DESC
+        `).all(req.user.id, req.user.id, req.user.id);
         const attendance = db.prepare("SELECT status, COUNT(*) as count FROM attendance WHERE user_id = ? GROUP BY status").all(req.user.id) as any[];
         stats = { logs, attendance };
       }
@@ -2355,7 +2610,56 @@ const notifyUser = async (userId: string|number, title: string, content: string,
 
       // 3. Upcoming Tasks
       let upcomingTasks = [];
-      if (!firestore) {
+      if (firestore) {
+        try {
+          const uP = (req.user.program || '').trim().toUpperCase();
+          const uY = (req.user.year || '').trim().toUpperCase();
+          const uG = (req.user.group_name || '').trim().toUpperCase();
+
+          const assignmentsSnap = await firestore.collection('assignments')
+            .where('status', '==', 'PUBLISHED')
+            .where('program', '==', uP)
+            .where('year', '==', uY)
+            .get();
+          
+          let assignments = assignmentsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          if (uG) {
+            assignments = assignments.filter((a: any) => (a.group_name || '').trim().toUpperCase() === uG);
+          }
+
+          // Filter out already submitted
+          const submissionsSnap = await firestore.collection('submissions')
+            .where('student_id', '==', req.user.id.toString())
+            .get();
+          const submittedIds = new Set(submissionsSnap.docs.map(doc => doc.data().assignment_id.toString()));
+          assignments = assignments.filter((a: any) => !submittedIds.has(a.id.toString()));
+
+          const testsSnap = await firestore.collection('tests')
+            .where('status', '==', 'ACTIVE')
+            .where('program', '==', uP)
+            .where('year', '==', uY)
+            .get();
+          
+          let tests = testsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          if (uG) {
+            tests = tests.filter((t: any) => (t.group_name || '').trim().toUpperCase() === uG);
+          }
+
+          // Filter out already attempted
+          const attemptsSnap = await firestore.collection('test_attempts')
+            .where('user_id', '==', req.user.id.toString())
+            .get();
+          const attemptedIds = new Set(attemptsSnap.docs.map(doc => doc.data().test_id.toString()));
+          tests = tests.filter((t: any) => !attemptedIds.has(t.id.toString()));
+
+          upcomingTasks = [
+            ...assignments.map((a: any) => ({ ...a, taskType: 'ASSIGNMENT' })),
+            ...tests.map((t: any) => ({ ...t, taskType: 'TEST' }))
+          ].slice(0, 5);
+        } catch (err) {
+          console.error("Firestore upcoming tasks error:", err);
+        }
+      } else {
         const uP = (req.user.program || '').trim().toUpperCase();
         const uY = (req.user.year || '').trim().toUpperCase();
         const uG = (req.user.group_name || '').trim().toUpperCase();
@@ -2382,13 +2686,54 @@ const notifyUser = async (userId: string|number, title: string, content: string,
 
       // 4. Notifications
       let notifications = [];
-      if (!firestore) {
+      if (firestore) {
+        try {
+          const notifSnap = await firestore.collection('notifications')
+            .where('user_id', '==', req.user.id.toString())
+            .get();
+          notifications = notifSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          notifications.sort((a: any, b: any) => {
+             const tA = a.created_at?.toDate?.() || new Date(a.created_at);
+             const tB = b.created_at?.toDate?.() || new Date(b.created_at);
+             return tB - tA;
+          });
+          notifications = notifications.slice(0, 10);
+        } catch (err) {
+          console.error("Firestore notifications dashboard error:", err);
+        }
+      } else {
         notifications = db.prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 10").all(req.user.id);
       }
       
       // 5. Active Study Session
       let activeSession = null;
-      if (!firestore) {
+      if (firestore) {
+        try {
+          const sessionsSnap = await firestore.collection('study_sessions')
+            .where('status', '==', 'ACTIVE')
+            .get();
+          
+          // Filter by class membership
+          const membersSnap = await firestore.collection('class_members')
+            .where('user_id', '==', req.user.id.toString())
+            .get();
+          const myClassIds = new Set(membersSnap.docs.map(doc => doc.data().class_id.toString()));
+
+          const active = sessionsSnap.docs.find(doc => myClassIds.has(doc.data().class_id.toString()));
+          if (active) {
+            const sessionData = active.data();
+            const teacherSnap = await firestore.collection('users').doc(sessionData.teacher_id.toString()).get();
+            const teacherData = teacherSnap.data();
+            activeSession = {
+              id: active.id,
+              ...sessionData,
+              teacher_name: teacherData ? `${teacherData.name} ${teacherData.surname || ''}`.trim() : 'Mësimdhënës'
+            };
+          }
+        } catch (err) {
+          console.error("Firestore active session error:", err);
+        }
+      } else {
         activeSession = db.prepare(`
           SELECT ss.*, u.name as teacher_name 
           FROM study_sessions ss
@@ -2409,6 +2754,157 @@ const notifyUser = async (userId: string|number, title: string, content: string,
     } catch (err: any) {
       console.error("Student Dashboard Bulk Fetch Error:", err);
       res.status(500).json({ error: "Gabim në ngarkimin e dashboardit" });
+    }
+  });
+
+  // Social Endpoints for Performance Logs
+  app.post("/api/social-logs/:id/like", authenticate, async (req: any, res) => {
+    try {
+      if (firestore) {
+         const likeRef = firestore.collection('performance_logs').doc(req.params.id).collection('likes').doc(req.user.id.toString());
+         const doc = await likeRef.get();
+         if (doc.exists) {
+           await likeRef.delete();
+           return res.json({ liked: false });
+         } else {
+           await likeRef.set({
+             user_id: req.user.id.toString(),
+             created_at: admin.firestore.FieldValue.serverTimestamp()
+           });
+           return res.json({ liked: true });
+         }
+      } else {
+        const liked = db.prepare("SELECT 1 FROM activity_likes WHERE activity_id = ? AND user_id = ?").get(req.params.id, req.user.id);
+        if (liked) {
+          db.prepare("DELETE FROM activity_likes WHERE activity_id = ? AND user_id = ?").run(req.params.id, req.user.id);
+          return res.json({ liked: false });
+        } else {
+          db.prepare("INSERT INTO activity_likes (activity_id, user_id) VALUES (?, ?)").run(req.params.id, req.user.id);
+          return res.json({ liked: true });
+        }
+      }
+    } catch (e) {
+      return handleFirestoreError(res, e, "like-activity");
+    }
+  });
+
+  app.post("/api/social-logs/:id/favorite", authenticate, async (req: any, res) => {
+    try {
+      if (firestore) {
+         const favRef = firestore.collection('performance_logs').doc(req.params.id).collection('favorites').doc(req.user.id.toString());
+         const doc = await favRef.get();
+         if (doc.exists) {
+           await favRef.delete();
+           return res.json({ favorited: false });
+         } else {
+           await favRef.set({
+             user_id: req.user.id.toString(),
+             created_at: admin.firestore.FieldValue.serverTimestamp()
+           });
+           return res.json({ favorited: true });
+         }
+      } else {
+        const favorited = db.prepare("SELECT 1 FROM activity_favorites WHERE activity_id = ? AND user_id = ?").get(req.params.id, req.user.id);
+        if (favorited) {
+          db.prepare("DELETE FROM activity_favorites WHERE activity_id = ? AND user_id = ?").run(req.params.id, req.user.id);
+          return res.json({ favorited: false });
+        } else {
+          db.prepare("INSERT INTO activity_favorites (activity_id, user_id) VALUES (?, ?)").run(req.params.id, req.user.id);
+          return res.json({ favorited: true });
+        }
+      }
+    } catch (e) {
+      return handleFirestoreError(res, e, "favorite-activity");
+    }
+  });
+
+  app.post("/api/social-logs/:activityId/comments/:commentId/like", authenticate, async (req: any, res) => {
+    try {
+      if (firestore) {
+         const likeRef = firestore.collection('performance_logs').doc(req.params.activityId).collection('comments').doc(req.params.commentId).collection('likes').doc(req.user.id.toString());
+         const doc = await likeRef.get();
+         if (doc.exists) {
+           await likeRef.delete();
+           return res.json({ liked: false });
+         } else {
+           await likeRef.set({
+             user_id: req.user.id.toString(),
+             created_at: admin.firestore.FieldValue.serverTimestamp()
+           });
+           return res.json({ liked: true });
+         }
+      } else {
+        const liked = db.prepare("SELECT 1 FROM comment_likes WHERE comment_id = ? AND user_id = ?").get(req.params.commentId, req.user.id);
+        if (liked) {
+          db.prepare("DELETE FROM comment_likes WHERE comment_id = ? AND user_id = ?").run(req.params.commentId, req.user.id);
+          return res.json({ liked: false });
+        } else {
+          db.prepare("INSERT INTO comment_likes (comment_id, user_id) VALUES (?, ?)").run(req.params.commentId, req.user.id);
+          return res.json({ liked: true });
+        }
+      }
+    } catch (e) {
+      return handleFirestoreError(res, e, "like-comment");
+    }
+  });
+
+  app.post("/api/social-logs/:id/comments", authenticate, async (req: any, res) => {
+    const { content } = req.body;
+    if (!content) {
+      return res.status(400).json({ error: "Përmbajtja është e detyrueshme" });
+    }
+    try {
+      if (firestore) {
+        const commentRef = firestore.collection('performance_logs').doc(req.params.id).collection('comments').doc();
+        const comment = {
+          user_id: req.user.id.toString(),
+          user_name: `${req.user.name} ${req.user.surname || ''}`.trim(),
+          content,
+          created_at: admin.firestore.FieldValue.serverTimestamp()
+        };
+        await commentRef.set(comment);
+        return res.json({ id: commentRef.id, ...comment });
+      } else {
+        const result = db.prepare("INSERT INTO activity_comments (activity_id, user_id, content) VALUES (?, ?, ?)").run(req.params.id, req.user.id, content);
+        return res.json({ id: result.lastInsertRowid, activity_id: req.params.id, user_id: req.user.id, content });
+      }
+    } catch (e) {
+      return handleFirestoreError(res, e, "comment-activity");
+    }
+  });
+
+  app.get("/api/social-logs/:id/comments", authenticate, async (req: any, res) => {
+    try {
+      if (firestore) {
+        const snap = await firestore.collection('performance_logs').doc(req.params.id).collection('comments').orderBy('created_at', 'desc').get();
+        const comments = await Promise.all(snap.docs.map(async (doc: any) => {
+          const commentId = doc.id;
+          const [likesSnap, myLikeDoc] = await Promise.all([
+             firestore.collection('performance_logs').doc(req.params.id).collection('comments').doc(commentId).collection('likes').get(),
+             firestore.collection('performance_logs').doc(req.params.id).collection('comments').doc(commentId).collection('likes').doc(req.user.id.toString()).get()
+          ]);
+          return { 
+            id: commentId, 
+            ...doc.data(), 
+            likes_count: likesSnap.size,
+            is_liked: myLikeDoc.exists
+          };
+        }));
+        return res.json(comments);
+      } else {
+        const comments = db.prepare(`
+          SELECT ac.*, u.name as user_name,
+                 (SELECT COUNT(*) FROM comment_likes WHERE comment_id = ac.id) as likes_count,
+                 EXISTS(SELECT 1 FROM comment_likes WHERE comment_id = ac.id AND user_id = ?) as is_liked
+          FROM activity_comments ac
+          JOIN users u ON ac.user_id = u.id
+          WHERE ac.activity_id = ?
+          ORDER BY ac.created_at DESC
+        `).all(req.user.id, req.params.id);
+        return res.json(comments);
+      }
+    } catch (e) {
+      return handleFirestoreError(res, e, "get-activity-comments");
     }
   });
 
@@ -3509,46 +4005,54 @@ const notifyUser = async (userId: string|number, title: string, content: string,
     
     if (firestore) {
       try {
-        const presenceSnap = await firestore.collection('session_presence')
-          .where('user_id', '==', req.user.id.toString())
-          .get();
+        const ids = [req.user.id.toString(), parseInt(req.user.id)].filter(v => typeof v !== 'undefined' && v !== null && !isNaN(v as any));
         
-        const presence = await Promise.all(presenceSnap.docs.map(async d => {
-          const pData = d.data();
-          const sessionSnap = await firestore.collection('study_sessions').doc(pData.session_id.toString()).get();
-          const sessionData = sessionSnap.data();
-          const teacherSnap = sessionData ? await firestore.collection('users').doc(sessionData.teacher_id.toString()).get() : null;
-          const teacherData = teacherSnap?.data();
+        let presence: any[] = [];
+        if (ids.length > 0) {
+          const presenceSnap = await firestore.collection('session_presence')
+            .where('user_id', 'in', ids)
+            .get();
           
-          return {
-            subject: sessionData?.subject,
-            t_name: teacherData?.name,
-            t_surname: teacherData?.surname,
-            is_verified: pData.is_verified,
-            created_at: sessionData?.created_at?.toDate?.() || sessionData?.created_at
-          };
-        }));
+          presence = await Promise.all(presenceSnap.docs.map(async d => {
+            const pData = d.data();
+            const sessionSnap = await firestore.collection('study_sessions').doc(pData.session_id.toString()).get();
+            const sessionData = sessionSnap.data();
+            const teacherSnap = sessionData ? await firestore.collection('users').doc(sessionData.teacher_id.toString()).get() : null;
+            const teacherData = teacherSnap?.data();
+            
+            return {
+              subject: sessionData?.subject,
+              t_name: teacherData?.name,
+              t_surname: teacherData?.surname,
+              is_verified: pData.is_verified,
+              created_at: sessionData?.created_at?.toDate?.() || sessionData?.created_at
+            };
+          }));
+        }
 
-        const testSnap = await firestore.collection('test_attempts')
-          .where('user_id', '==', req.user.id)
-          .where('status', '==', 'GRADED')
-          .get();
-        
-        const testResults = await Promise.all(testSnap.docs.map(async d => {
-          const ta = d.data();
-          const testSnap = await firestore.collection('tests').doc(ta.test_id.toString()).get();
-          const test = testSnap.data();
-          return {
-            title: test?.title,
-            total_score: ta.total_score,
-            max_score: test?.total_points,
-            grade: ta.grade,
-            date: ta.end_time?.toDate?.() || ta.end_time
-          };
-        }));
+        let testResults: any[] = [];
+        if (ids.length > 0) {
+          const testSnap = await firestore.collection('test_attempts')
+            .where('user_id', 'in', ids)
+            .where('status', '==', 'GRADED')
+            .get();
+          
+          testResults = await Promise.all(testSnap.docs.map(async d => {
+            const ta = d.data();
+            const testSnap = await firestore.collection('tests').doc(ta.test_id.toString()).get();
+            const test = testSnap.data();
+            return {
+              title: test?.title,
+              total_score: ta.total_score,
+              max_score: test?.total_points,
+              grade: ta.grade,
+              date: ta.end_time?.toDate?.() || ta.end_time
+            };
+          }));
+        }
 
         const subSnap = await firestore.collection('submissions')
-          .where('student_id', '==', req.user.id)
+          .where('student_id', '==', req.user.id.toString())
           .where('status', '==', 'GRADED')
           .get();
         

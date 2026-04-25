@@ -123,6 +123,135 @@
         "created_at": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "title", "uploader_id", "class_id"]
+    },
+    "PerformanceLog": {
+      "title": "PerformanceLog",
+      "description": "Student activity/performance log entry",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "type": { "type": "string", "enum": ["TEST", "ASSIGNMENT", "ATTENDANCE", "LECTURE"] },
+        "score": { "type": "number" },
+        "max_score": { "type": "number" },
+        "comment": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "type", "timestamp"]
+    },
+    "ActivityLike": {
+      "title": "ActivityLike",
+      "description": "User like on an activity log",
+      "type": "object",
+      "properties": {
+        "activity_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["activity_id", "user_id"]
+    },
+    "ActivityComment": {
+      "title": "ActivityComment",
+      "description": "Comment on an activity log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "activity_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "user_name": { "type": "string" },
+        "content": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "activity_id", "user_id", "content"]
+    },
+    "ActivityFavorite": {
+      "title": "ActivityFavorite",
+      "description": "Activity marked as favorite by a user",
+      "type": "object",
+      "properties": {
+        "activity_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["activity_id", "user_id"]
+    },
+    "CommentLike": {
+      "title": "CommentLike",
+      "description": "User like on a comment",
+      "type": "object",
+      "properties": {
+        "comment_id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["comment_id", "user_id"]
+    },
+    "Assignment": {
+      "title": "Assignment",
+      "description": "Educational assignment",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teacher_id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "program": { "type": "string" },
+        "year": { "type": "string" },
+        "deadline": { "type": "string", "format": "date-time" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["DRAFT", "PUBLISHED", "ARCHIVED"] }
+      },
+      "required": ["title", "teacher_id", "status"]
+    },
+    "Test": {
+      "title": "Test",
+      "description": "Student examination",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "teacher_id": { "type": "string" },
+        "title": { "type": "string" },
+        "program": { "type": "string" },
+        "year": { "type": "string" },
+        "duration": { "type": "number" },
+        "questions": { "type": "array" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "status": { "type": "string", "enum": ["DRAFT", "ACTIVE", "COMPLETED"] }
+      },
+      "required": ["title", "teacher_id", "status"]
+    },
+    "Attendance": {
+      "title": "Attendance",
+      "description": "Student attendance record",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "user_id": { "type": "string" },
+        "class_id": { "type": "string" },
+        "status": { "type": "string", "enum": ["PRESENT", "ABSENT", "LATE"] },
+        "group_name": { "type": "string" },
+        "program": { "type": "string" },
+        "year": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "status", "timestamp"]
+    },
+    "StudentActivity": {
+      "title": "StudentActivity",
+      "description": "Student posted activity/event/announcement",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "user_name": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "type": { "type": "string", "enum": ["EVENT", "DONATION", "POLL"] },
+        "duration": { "type": "string", "enum": ["HOUR", "DAY", "WEEK", "MONTH"] },
+        "created_at": { "type": "string", "format": "date-time" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "link": { "type": "string", "format": "uri" }
+      },
+      "required": ["user_id", "title", "content", "type", "duration", "created_at", "expires_at"]
     }
   },
   "firestore": {
@@ -157,6 +286,42 @@
     "/library_books/{bookId}": {
       "schema": "Book",
       "description": "Digital library materials"
+    },
+    "/performance_logs/{logId}": {
+      "schema": "PerformanceLog",
+      "description": "Activity performance logs"
+    },
+    "/performance_logs/{logId}/likes/{likeId}": {
+      "schema": "ActivityLike",
+      "description": "Likes on activities"
+    },
+    "/performance_logs/{logId}/comments/{commentId}": {
+      "schema": "ActivityComment",
+      "description": "Comments on activities"
+    },
+    "/performance_logs/{logId}/comments/{commentId}/likes/{likeId}": {
+      "schema": "CommentLike",
+      "description": "Likes on comments"
+    },
+    "/performance_logs/{logId}/favorites/{userId}": {
+      "schema": "ActivityFavorite",
+      "description": "Users who favorited this activity"
+    },
+    "/assignments/{assignmentId}": {
+      "schema": "Assignment",
+      "description": "Course assignments"
+    },
+    "/tests/{testId}": {
+      "schema": "Test",
+      "description": "Course tests"
+    },
+    "/attendance/{attendanceId}": {
+      "schema": "Attendance",
+      "description": "Attendance records"
+    },
+    "/student_activities/{activityId}": {
+      "schema": "StudentActivity",
+      "description": "Student posted activities"
     }
   }
 }

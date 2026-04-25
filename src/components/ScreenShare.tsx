@@ -8,8 +8,9 @@ import {
   Check, Hash, Mic, MicOff, Settings, X, Maximize,
   Minimize, MoreVertical, Hand, MessageCircle
 } from 'lucide-react';
-import { io, Socket } from 'socket.io-client';
+import { io } from 'socket.io-client';
 import { useAuth } from '../App';
+import { AktiviteteFSHN } from './AktiviteteFSHN';
 
 export default function ScreenShare({ overrideClassId }: { overrideClassId?: string | number }) {
   const { user, token, apiFetch, socket } = useAuth();
@@ -328,7 +329,9 @@ export default function ScreenShare({ overrideClassId }: { overrideClassId?: str
   };
 
   return (
-    <div className="min-h-[80vh] flex flex-col bg-slate-900 rounded-[2.5rem] overflow-hidden shadow-2xl relative">
+    <div className="space-y-6">
+      <AktiviteteFSHN user={user} />
+      <div className="min-h-[80vh] flex flex-col bg-slate-900 rounded-[2.5rem] overflow-hidden shadow-2xl relative">
       {/* Google Meet Top Bar */}
       <div className="absolute top-0 left-0 right-0 p-6 flex justify-between items-center z-20 bg-gradient-to-b from-slate-950/80 to-transparent pointer-events-none">
         <div className="flex items-center gap-4 pointer-events-auto">
@@ -516,6 +519,7 @@ export default function ScreenShare({ overrideClassId }: { overrideClassId?: str
           </motion.div>
         )}
       </AnimatePresence>
+      </div>
     </div>
   );
 }

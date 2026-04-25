@@ -41,15 +41,42 @@ import {
   PinOff,
   UserCheck,
   LayoutGrid,
-  Megaphone
+  Megaphone,
+  Heart,
+  MessageCircle,
+  Send,
+  Zap,
+  Loader2,
+  Star,
+  User as UserIcon,
+  BarChart3
 } from 'lucide-react';
 import { io, Socket } from 'socket.io-client';
+import { 
+  onSnapshot, 
+  collection, 
+  query, 
+  where, 
+  orderBy, 
+  limit, 
+  addDoc, 
+  serverTimestamp,
+  deleteDoc,
+  doc,
+  Timestamp,
+  getDocs
+} from 'firebase/firestore';
+import { auth, googleProvider, db } from './firebase';
+import { signInWithPopup } from 'firebase/auth';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { User, Role, PersonalNote } from './types';
 import { COLORS, PROGRAMS, YEARS, GROUPS } from './constants';
 import Attendance from './components/Attendance';
 import Tests from './components/Tests';
 import Chat from './components/Chat';
-import Activities from './components/Activities';
+// import Activities from './components/Activities';
+import { AktiviteteFSHN } from './components/AktiviteteFSHN';
+
 
 const handleNotificationNavigation = (n: any, navigate: any, setShowNotifications?: (v: boolean) => void) => {
   if (setShowNotifications) setShowNotifications(false);
@@ -122,10 +149,6 @@ const LiveQuestionModal = ({ question, onConfirm }: { question: any, onConfirm: 
   );
 };
 
-import { auth, googleProvider } from './firebase';
-import { signInWithPopup } from 'firebase/auth';
-import { useLocation, useSearchParams } from 'react-router-dom';
-
 // --- Contexts ---
 const AuthContext = createContext<{
   user: User | null;
@@ -158,7 +181,7 @@ const Sidebar = ({ role }: { role: Role }) => {
     { icon: FileText, label: 'Teste', path: '/tests' },
     { icon: BookOpen, label: 'Detyra', path: '/assignments' },
     { icon: HelpCircle, label: 'Pyetje Live', path: '/live-questions' },
-    { icon: Megaphone, label: 'Aktivitete', path: '/activities' },
+    { icon: Megaphone, label: 'Aktivitete FSHN', path: '/activities' },
     { icon: Monitor, label: 'Screen Share', path: '/screen-share' },
     { icon: MessageSquare, label: 'Chat', path: '/chat' },
     { icon: TrendingUp, label: 'Analitika', path: '/analytics' },
@@ -1556,6 +1579,273 @@ const PersonalNotesSection = ({ notes, onUpdate, apiFetch }: { notes: PersonalNo
   );
 };
 
+const formatRelativeTime = (date: any) => {
+  if (!date) return 'Sapo';
+  const now = new Date();
+  const then = new Date(date?.toDate?.() || date);
+  const diffInSeconds = Math.floor((now.getTime() - then.getTime()) / 1000);
+
+  if (diffInSeconds < 60) return 'Tani';
+  if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} min më parë`;
+  if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} orë më parë`;
+  if (diffInSeconds < 604800) return `${Math.floor(diffInSeconds / 86400)} ditë më parë`;
+  
+  return then.toLocaleDateString();
+};
+
+const CommentItem = ({ comment, activityId, apiFetch, user }: { key?: any, comment: any, activityId: string, apiFetch: any, user: any }) => {
+  const [likesCount, setLikesCount] = useState(comment.likes_count || 0);
+  const [isLiked, setIsLiked] = useState(comment.is_liked || false);
+  const [isLiking, setIsLiking] = useState(false);
+
+  useEffect(() => {
+    if (!db) return;
+    const unsub = onSnapshot(collection(db, 'performance_logs', activityId.toString(), 'comments', comment.id.toString(), 'likes'), (snap) => {
+      setLikesCount(snap.size);
+      setIsLiked(snap.docs.some(doc => doc.id === user?.id?.toString()));
+    });
+    return () => unsub();
+  }, [comment.id, activityId, user?.id]);
+
+  const handleLike = async () => {
+    if (isLiking) return;
+    setIsLiking(true);
+    try {
+      await apiFetch(`/api/social-logs/${activityId}/comments/${comment.id}/like`, { method: 'POST' });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLiking(false);
+    }
+  };
+
+  return (
+    <div className="bg-white p-2.5 rounded-xl border border-slate-100 space-y-1">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-black text-slate-900 uppercase tracking-tight">{comment.user_name}</span>
+        <span className="text-[9px] text-slate-400">{formatRelativeTime(comment.created_at)}</span>
+      </div>
+      <p className="text-xs text-slate-600 leading-relaxed">{comment.content}</p>
+      <div className="flex justify-end">
+        <button 
+          onClick={handleLike}
+          disabled={isLiking}
+          className={`flex items-center gap-1 text-[9px] font-bold transition-all ${isLiked ? 'text-rose-500' : 'text-slate-400 hover:text-slate-500'}`}
+        >
+          <Heart size={10} fill={isLiked ? "currentColor" : "none"} />
+          <span>{likesCount}</span>
+        </button>
+      </div>
+    </div>
+  );
+};
+
+const ActivityItem = ({ act, onRefresh, apiFetch }: { key?: any, act: any, onRefresh: () => void, apiFetch: any }) => {
+  const [showComments, setShowComments] = useState(false);
+  const [comments, setComments] = useState<any[]>([]);
+  const [likesCount, setLikesCount] = useState(act.likes_count || 0);
+  const [commentsCount, setCommentsCount] = useState(act.comments_count || 0);
+  const [isLiked, setIsLiked] = useState(act.is_liked || false);
+  const [isFavorite, setIsFavorite] = useState(act.is_favorite || false);
+  const [newComment, setNewComment] = useState("");
+  const [isLiking, setIsLiking] = useState(false);
+  const [isFavoriting, setIsFavoriting] = useState(false);
+  const { user } = useAuth(); 
+
+  useEffect(() => {
+    if (!act.id || !db) return;
+
+    // Real-time Likes listener
+    const likesUnsub = onSnapshot(collection(db, 'performance_logs', act.id.toString(), 'likes'), (snap) => {
+      setLikesCount(snap.size);
+      setIsLiked(snap.docs.some(doc => doc.id === user?.id?.toString()));
+    }, (err) => console.error("Likes listener error:", err));
+
+    // Real-time Comments count listener
+    const commentsUnsub = onSnapshot(collection(db, 'performance_logs', act.id.toString(), 'comments'), (snap) => {
+      setCommentsCount(snap.size);
+    }, (err) => console.error("Comments count listener error:", err));
+
+    // Real-time Favorites listener
+    const favUnsub = onSnapshot(collection(db, 'performance_logs', act.id.toString(), 'favorites'), (snap) => {
+      setIsFavorite(snap.docs.some(doc => doc.id === user?.id?.toString()));
+    }, (err) => console.error("Favorite listener error:", err));
+
+    return () => {
+      likesUnsub();
+      commentsUnsub();
+      favUnsub();
+    };
+  }, [act.id, user?.id]);
+
+  useEffect(() => {
+    if (showComments && act.id && db) {
+      const q = query(collection(db, 'performance_logs', act.id.toString(), 'comments'), orderBy('created_at', 'desc'));
+      const unsub = onSnapshot(q, (snap) => {
+        setComments(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      }, (err) => console.error("Comments listener error:", err));
+      return () => unsub();
+    }
+  }, [showComments, act.id]);
+
+  const handleLike = async () => {
+    if (isLiking) return;
+    setIsLiking(true);
+    try {
+      await apiFetch(`/api/social-logs/${act.id}/like`, { method: 'POST' });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLiking(false);
+    }
+  };
+
+  const handleFavorite = async () => {
+    if (isFavoriting) return;
+    setIsFavoriting(true);
+    try {
+      await apiFetch(`/api/social-logs/${act.id}/favorite`, { method: 'POST' });
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsFavoriting(false);
+    }
+  };
+
+  const handleAddComment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newComment.trim()) return;
+    try {
+      await apiFetch(`/api/social-logs/${act.id}/comments`, {
+        method: 'POST',
+        body: JSON.stringify({ content: newComment })
+      });
+      setNewComment("");
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  const activityIcon = () => {
+    switch (act.type) {
+      case 'TEST': 
+      case 'TEST_PUBLISHED': return <Award size={18} className="text-orange-500" />;
+      case 'ASSIGNMENT': 
+      case 'ASSIGNMENT_PUBLISHED': return <FileText size={18} className="text-indigo-500" />;
+      case 'ATTENDANCE': return <CheckCircle size={18} className="text-emerald-500" />;
+      default: return <Zap size={18} className="text-blue-500" />;
+    }
+  };
+
+  const activityTitle = () => {
+    switch (act.type) {
+      case 'TEST_PUBLISHED': return 'Test i Ri u Publikua';
+      case 'ASSIGNMENT_PUBLISHED': return 'Detyrë e Re u Publikua';
+      case 'TEST': return 'Përfunduar Testi';
+      case 'ASSIGNMENT': return 'Dorëzuar Detyra';
+      case 'ATTENDANCE': return 'Pjesëmarrje në Leksion';
+      default: return act.title || 'Aktivitet akademik';
+    }
+  };
+
+  return (
+    <div className="bg-slate-50/50 rounded-2xl border border-slate-100 p-4 space-y-3">
+      <div className="flex items-start justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 bg-white rounded-xl shadow-sm flex items-center justify-center border border-slate-50">
+            {activityIcon()}
+          </div>
+          <div>
+            <p className="text-sm font-bold text-slate-900">{activityTitle()}</p>
+            <p className="text-[10px] text-slate-500 font-medium">{formatRelativeTime(act.timestamp)}</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {act.score !== null && (
+            <div className="px-2 py-1 bg-white rounded-lg border border-slate-100 shadow-sm">
+              <span className="text-xs font-black text-slate-900">{act.score}/{act.max_score}</span>
+            </div>
+          )}
+          <button 
+            onClick={handleFavorite}
+            disabled={isFavoriting}
+            className={`p-1.5 rounded-lg border transition-all ${isFavorite ? 'bg-yellow-50 border-yellow-200 text-yellow-500 shadow-sm' : 'bg-white border-slate-100 text-slate-300 hover:text-slate-400'}`}
+          >
+            <Star size={14} fill={isFavorite ? "currentColor" : "none"} />
+          </button>
+        </div>
+      </div>
+      
+      {act.comment && (
+        <p className="text-xs text-slate-600 bg-white/50 p-2 rounded-lg italic">"{act.comment}"</p>
+      )}
+
+      <div className="flex items-center gap-4 pt-2 border-t border-slate-100/50">
+         <button 
+           onClick={handleLike}
+           disabled={isLiking}
+           className={`flex items-center gap-1.5 text-[10px] font-bold transition-all ${isLiked ? 'text-rose-500' : 'text-slate-400 hover:text-slate-600'}`}
+         >
+           <Heart size={14} fill={isLiked ? "currentColor" : "none"} />
+           <span>{likesCount}</span>
+         </button>
+         <button 
+           onClick={() => setShowComments(!showComments)}
+           className={`flex items-center gap-1.5 text-[10px] font-bold transition-all ${showComments ? 'text-blue-600' : 'text-slate-400 hover:text-slate-600'}`}
+         >
+           <MessageCircle size={14} fill={showComments ? "currentColor" : "none"} />
+           <span>{commentsCount}</span>
+         </button>
+         <div className="flex-1"></div>
+      </div>
+
+      <AnimatePresence>
+        {showComments && (
+          <motion.div 
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            className="overflow-hidden space-y-3 pt-2"
+          >
+            <div className="max-h-[200px] overflow-y-auto space-y-2 pr-1 custom-scrollbar">
+              {comments.length > 0 ? (
+                comments.map((c, idx) => (
+                  <CommentItem 
+                    key={c.id || idx} 
+                    comment={c} 
+                    activityId={act.id} 
+                    apiFetch={apiFetch} 
+                    user={user} 
+                  />
+                ))
+              ) : (
+                <p className="text-center text-[10px] text-slate-400 italic py-2">Asnjë koment akoma.</p>
+              )}
+            </div>
+            
+            <form onSubmit={handleAddComment} className="flex gap-2">
+              <input 
+                type="text" 
+                value={newComment}
+                onChange={(e) => setNewComment(e.target.value)}
+                placeholder="Shkruaj një koment..." 
+                className="flex-1 bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+              />
+              <button 
+                type="submit"
+                disabled={!newComment.trim()}
+                className="bg-blue-600 text-white p-2 rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:grayscale transition-all"
+              >
+                <Send size={14} />
+              </button>
+            </form>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 const Dashboard = () => {
   const { user, token, socket, apiFetch, refreshUser } = useAuth();
   const navigate = useNavigate();
@@ -1662,7 +1952,7 @@ const Dashboard = () => {
 
   const fetchActiveNotes = useCallback(async () => {
     try {
-      const data = await apiFetch('/api/classes/notes/active');
+      const data = await apiFetch('/api/student/active-notes');
       setActiveNotes(data);
     } catch (e) { console.error(e); }
   }, [apiFetch]);
@@ -1753,6 +2043,28 @@ const Dashboard = () => {
 
     loadData();
 
+    // Firestore Real-time Listeners for Performance & Activities
+    const logsRef = collection(db, 'performance_logs');
+    const logsQuery = user.role === 'STUDENT'
+      ? query(logsRef, where('user_id', 'in', [String(user.id), Number(user.id)]))
+      : query(logsRef, orderBy('timestamp', 'desc'), limit(20));
+
+    const unsubscribeLogs = onSnapshot(logsQuery, () => {
+      fetchDashboardData();
+    });
+
+    const unsubscribeAttendance = onSnapshot(collection(db, 'attendance'), () => {
+      fetchDashboardData();
+    });
+
+    const unsubscribeAssignments = onSnapshot(collection(db, 'assignments'), () => {
+      fetchDashboardData();
+    });
+
+    const unsubscribeTests = onSnapshot(collection(db, 'tests'), () => {
+      fetchDashboardData();
+    });
+
     const interval = setInterval(fetchDashboardData, 60000);
     
     if (user.role === 'TEACHER') {
@@ -1776,6 +2088,10 @@ const Dashboard = () => {
       
       return () => {
         clearInterval(interval);
+        unsubscribeLogs();
+        unsubscribeAttendance();
+        unsubscribeAssignments();
+        unsubscribeTests();
         socket.off('submission_updated', hDash);
         socket.off('student_joined_class', hDash);
         socket.off('score_updated', hDash);
@@ -1817,6 +2133,10 @@ const Dashboard = () => {
       
       return () => {
         clearInterval(interval);
+        unsubscribeLogs();
+        unsubscribeAttendance();
+        unsubscribeAssignments();
+        unsubscribeTests();
         socket.off('member_status_updated', hMember);
         socket.off('score_updated', hScore);
         socket.off('submission_updated', hDash);
@@ -1838,10 +2158,10 @@ const Dashboard = () => {
     { label: 'Progresi i Përgjithshëm', value: stats?.classProgress?.length > 0 ? (stats.classProgress[stats.classProgress.length - 1].avg_perf * 100).toFixed(0) + '%' : '88%', icon: TrendingUp, color: 'text-indigo-600', bg: 'bg-indigo-50', trend: '+2% Sot' },
     { label: 'Klasat e Mia', value: allClasses.length || '0', icon: BookOpen, color: 'text-purple-600', bg: 'bg-purple-50', trend: 'Aktive' },
   ] : [
-    { label: 'Mesatarja', value: stats?.logs?.length > 0 ? (stats.logs.reduce((acc: any, curr: any) => acc + (curr.max_score > 0 ? (curr.score/curr.max_score) : 0), 0) / stats.logs.length * 10).toFixed(1) : '0', icon: Award, color: 'text-blue-600', bg: 'bg-blue-50', trend: 'Live' },
-    { label: 'Pjesëmarrja', value: stats?.attendance?.find((a: any) => a.status === 'PRESENT')?.count || '0', icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50', trend: 'Konfirmuar' },
-    { label: 'Pikët Totale', value: stats?.logs?.reduce((acc: any, curr: any) => acc + curr.score, 0).toFixed(0) || '0', icon: TrendingUp, color: 'text-indigo-600', bg: 'bg-indigo-50', trend: '+12% këtë javë' },
-    { label: 'Aktivitete', value: stats?.logs?.length || '0', icon: FileText, color: 'text-purple-600', bg: 'bg-purple-50', trend: 'Sot' },
+    { label: 'Mesatare', value: stats?.averageScore !== undefined ? stats.averageScore.toFixed(1) : '0.0', icon: Award, color: 'text-blue-600', bg: 'bg-blue-50', trend: 'Mesatarja' },
+    { label: 'Pjesëmarrja', value: stats?.attendanceRate !== undefined ? stats.attendanceRate + '%' : (stats?.attendance?.find((a: any) => a.status === 'PRESENT')?.count || '0'), icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50', trend: 'Totale' },
+    { label: 'Pikët Totale', value: stats?.totalPoints !== undefined ? stats.totalPoints : '0', icon: TrendingUp, color: 'text-indigo-600', bg: 'bg-indigo-50', trend: 'Akumuluar' },
+    { label: 'Gjurmët', value: stats?.activitiesCount !== undefined ? stats.activitiesCount : (stats?.logs?.length || '0'), icon: FileText, color: 'text-purple-600', bg: 'bg-purple-50', trend: 'Realizuara' },
   ];
 
   if (loading) {
@@ -2378,11 +2698,11 @@ const Dashboard = () => {
           <div className="relative z-10">
             <div className="flex items-center justify-between mb-10">
               <div>
-                <h3 className="text-2xl font-bold text-slate-900 tracking-tight">Përmbledhje e Performancës 3D</h3>
+                <h3 className="text-2xl font-bold text-slate-900 tracking-tight">Përmbledhja e Performancës</h3>
                 <p className="text-slate-500 text-sm mt-1 font-medium">Analitika vizuale e progresit akademik</p>
               </div>
               <Link to="/analytics" className="px-5 py-2 bg-slate-50 text-blue-600 rounded-2xl text-sm font-bold border border-slate-100 hover:bg-blue-600 hover:text-white transition-all shadow-sm">
-                Shiko Analitikën e Plotë
+                Shiko Detajet
               </Link>
             </div>
             
@@ -2424,28 +2744,27 @@ const Dashboard = () => {
           </div>
         </div>
         <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
-          <h3 className="text-xl font-bold text-slate-900 mb-8">Aktiviteti i Fundit</h3>
-          <div className="space-y-6 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-            {recentActivity.map((act, i) => (
-              <motion.button 
-                key={i} 
-                onClick={() => handleNotificationClick(act)}
-                whileHover={{ x: 4 }}
-                className="w-full flex items-center space-x-4 group text-left"
-              >
-                <div className="w-12 h-12 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 border border-slate-100 group-hover:bg-blue-50 group-hover:text-blue-600 transition-all">
-                  <act.icon size={20} />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-slate-900 truncate group-hover:text-blue-600 transition-colors">{act.title}</p>
-                  <p className="text-[10px] text-slate-400 font-medium line-clamp-1 mb-1">{act.content}</p>
-                  <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">{act.time}</p>
-                </div>
-                <div className="opacity-0 group-hover:opacity-100 transition-opacity">
-                  <ChevronRight size={16} className="text-blue-600" />
-                </div>
-              </motion.button>
+          <div className="flex items-center justify-between mb-8">
+            <h3 className="text-xl font-bold text-slate-900">Logu i Performancës</h3>
+            <span className="px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-[10px] font-black uppercase tracking-wider">Live</span>
+          </div>
+          <div className="space-y-6 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+            {stats?.logs?.map((act: any, i: number) => (
+              <ActivityItem 
+                key={act.id || i} 
+                act={act} 
+                onRefresh={fetchDashboardData}
+                apiFetch={apiFetch}
+              />
             ))}
+            {(!stats?.logs || stats.logs.length === 0) && (
+              <div className="text-center py-10 space-y-3">
+                <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto text-slate-300">
+                  <Zap size={32} />
+                </div>
+                <p className="text-sm text-slate-400 italic">Nuk ka aktivitete të publikuara akoma.</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -2463,9 +2782,9 @@ const Dashboard = () => {
                 <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
                     <h4 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
                         <CheckCircle size={20} className="text-green-500" />
-                        Historia e Prezencave
+                        Historia e Prezencës
                     </h4>
-                    <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                    <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                         {studentHistory.presence.map((h: any, i: number) => (
                             <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
                                 <div>
@@ -2490,7 +2809,7 @@ const Dashboard = () => {
                             <Award size={20} className="text-orange-500" />
                             Rezultatet e Testeve
                         </h4>
-                        <div className="space-y-4 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
+                        <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                             {studentHistory.testResults.map((t: any, i: number) => (
                                 <div key={i} className="flex items-center justify-between p-4 bg-orange-50/30 rounded-2xl border border-orange-100/50">
                                     <div>
@@ -2513,7 +2832,7 @@ const Dashboard = () => {
                             <FileText size={20} className="text-purple-500" />
                             Vlerësimet e Detyrave
                         </h4>
-                        <div className="space-y-4 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
+                        <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
                             {studentHistory.homeworkResults.map((h: any, i: number) => (
                                 <div key={i} className="flex items-center justify-between p-4 bg-purple-50/30 rounded-2xl border border-purple-100/50">
                                     <div>
@@ -2657,7 +2976,7 @@ const Layout = ({ children }: { children: React.ReactNode }) => {
     { icon: FileText, label: 'Teste', path: '/tests' },
     { icon: BookOpen, label: 'Detyra', path: '/assignments' },
     { icon: HelpCircle, label: 'Pyetje Live', path: '/live-questions' },
-    { icon: Megaphone, label: 'Aktivitete', path: '/activities' },
+    { icon: Megaphone, label: 'Aktivitete FSHN', path: '/activities' },
     { icon: Monitor, label: 'Screen Share', path: '/screen-share' },
     { icon: MessageSquare, label: 'Chat', path: '/chat' },
     { icon: TrendingUp, label: 'Analitika', path: '/analytics' },
@@ -2837,40 +3156,49 @@ export default function App() {
   const apiFetch = useCallback(async (url: string, options: RequestInit = {}) => {
     console.log(`[apiFetch] Calling: ${url}`);
     const isFormData = options.body instanceof FormData;
-    const res = await fetch(url, {
-      ...options,
-      headers: {
-        ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
-        ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-        ...options.headers,
-      },
-    });
+    try {
+      const res = await fetch(url, {
+        ...options,
+        headers: {
+          ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
+          ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+          ...options.headers,
+        },
+      });
 
-    if (res.status === 401 && !url.includes('/api/auth/login')) {
-      console.warn("Unauthorized request, logging out...");
-      logout();
-      throw new Error("Seanca juaj ka skaduar. Ju lutem hyni përsëri.");
-    }
+      if (res.status === 401 && !url.includes('/api/auth/login')) {
+        console.warn("Unauthorized request, logging out...");
+        logout();
+        throw new Error("Seanca juaj ka skaduar. Ju lutem hyni përsëri.");
+      }
 
-    const contentType = res.headers.get("content-type");
-    if (contentType && contentType.indexOf("application/json") !== -1) {
-      const data = await res.json();
-      if (!res.ok) {
-        const errorMessage = data.details ? `${data.error}: ${data.details}` : (data.error || `Gabim i serverit: ${res.status}`);
-        throw new Error(errorMessage);
+      const contentType = res.headers.get("content-type");
+      if (contentType && contentType.indexOf("application/json") !== -1) {
+        const data = await res.json();
+        if (!res.ok) {
+          const errorMessage = data.details ? `${data.error}: ${data.details}` : (data.error || `Gabim i serverit: ${res.status}`);
+          throw new Error(errorMessage);
+        }
+        return data;
+      } else {
+        const text = await res.text();
+        console.error(`Non-JSON response from ${url}:`, text);
+        if (text.includes("<!DOCTYPE html>")) {
+          throw new Error(`Serveri u përgjigj me HTML (ndoshta 404). URL: ${url}, Status: ${res.status}`);
+        }
+        // If it's a 429, the text is usually "Rate exceeded"
+        if (res.status === 429) {
+          throw new Error("Keni bërë shumë kërkesa. Ju lutem prisni pak.");
+        }
+        throw new Error(`Serveri u përgjigj me format të gabuar (${res.status}).`);
       }
-      return data;
-    } else {
-      const text = await res.text();
-      console.error(`Non-JSON response from ${url}:`, text);
-      if (text.includes("<!DOCTYPE html>")) {
-        throw new Error(`Serveri u përgjigj me HTML (ndoshta 404). URL: ${url}, Status: ${res.status}`);
+    } catch (e: any) {
+      if (e.message === 'Failed to fetch') {
+        console.error(`[apiFetch] CRITICAL NETWORK ERROR fetching ${url}: Server might be DOWN or unreachable.`, e);
+      } else {
+        console.error(`[apiFetch] Error fetching ${url}:`, e);
       }
-      // If it's a 429, the text is usually "Rate exceeded"
-      if (res.status === 429) {
-        throw new Error("Keni bërë shumë kërkesa. Ju lutem prisni pak.");
-      }
-      throw new Error(`Serveri u përgjigj me format të gabuar (${res.status}).`);
+      throw e;
     }
   }, [token, logout]);
 
@@ -2982,7 +3310,8 @@ export default function App() {
         <Route path="/tests" element={<Layout><Tests /></Layout>} />
         <Route path="/assignments" element={<Layout><Assignments /></Layout>} />
         <Route path="/live-questions" element={<Layout><LiveQuestions /></Layout>} />
-        <Route path="/activities" element={<Layout><Activities /></Layout>} />
+
+        <Route path="/activities" element={<Layout><AktiviteteFSHN user={user!} /></Layout>} />
         <Route path="/screen-share" element={<Layout><ScreenShare /></Layout>} />
         <Route path="/chat" element={<Layout><Chat /></Layout>} />
         <Route path="/classroom" element={<Layout><Classroom /></Layout>} />

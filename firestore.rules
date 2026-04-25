@@ -104,6 +104,24 @@ service cloud.firestore {
              data.uploader_id == request.auth.uid;
     }
 
+    function isValidActivity(data) {
+      return hasOnlyAllowedFields(['user_id', 'user_name', 'title', 'content', 'type', 'duration', 'created_at', 'expires_at', 'link']) &&
+             data.user_id == request.auth.uid &&
+             data.title is string && data.title.size() > 0 && data.title.size() <= 100 &&
+             data.content is string && data.content.size() > 0 && data.content.size() <= 1000 &&
+             data.type in ['EVENT', 'DONATION', 'POLL'] &&
+             data.duration in ['HOUR', 'DAY', 'WEEK', 'MONTH'] &&
+             data.created_at == request.time &&
+             (!('link' in data) || (data.link is string && data.link.size() <= 500));
+    }
+
+    function isValidComment(data) {
+      return hasOnlyAllowedFields(['user_id', 'user_name', 'content', 'created_at']) &&
+             data.user_id == request.auth.uid &&
+             data.content is string && data.content.size() > 0 && data.content.size() <= 500 &&
+             data.created_at == request.time;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
@@ -164,6 +182,65 @@ service cloud.firestore {
       allow read: if isAuthenticated();
       allow create: if (isTeacher() || isClassAdmin(request.resource.data.class_id)) && isValidBook(request.resource.data);
       allow update, delete: if isTeacher() || isClassAdmin(resource.data.class_id) || isAdmin();
+    }
+
+    match /performance_logs/{logId} {
+      allow read: if isAuthenticated();
+      allow write: if isTeacher() || isAdmin();
+      
+      match /likes/{likeId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated() && likeId == request.auth.uid;
+      }
+
+      match /favorites/{userId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated() && userId == request.auth.uid;
+      }
+      
+      match /comments/{commentId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && request.resource.data.user_id == request.auth.uid;
+        allow update, delete: if isAuthenticated() && (resource.data.user_id == request.auth.uid || isAdmin());
+
+        match /likes/{likeId} {
+          allow read: if isAuthenticated();
+          allow write: if isAuthenticated() && likeId == request.auth.uid;
+        }
+      }
+    }
+
+    match /assignments/{assignmentId} {
+      allow read: if isAuthenticated();
+      allow write: if isTeacher() || isAdmin();
+    }
+
+    match /tests/{testId} {
+      allow read: if isAuthenticated();
+      allow write: if isTeacher() || isAdmin();
+    }
+
+    match /attendance/{attendanceId} {
+      allow read: if isAuthenticated();
+      allow write: if isTeacher() || isAdmin();
+    }
+
+    match /student_activities/{activityId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidActivity(request.resource.data);
+      allow update: if isAuthenticated() && (resource.data.user_id == request.auth.uid || isAdmin()) && isValidActivity(request.resource.data);
+      allow delete: if isAuthenticated() && (resource.data.user_id == request.auth.uid || isAdmin());
+
+      match /likes/{userId} {
+        allow read: if isAuthenticated();
+        allow write: if isAuthenticated() && userId == request.auth.uid;
+      }
+
+      match /comments/{commentId} {
+        allow read: if isAuthenticated();
+        allow create: if isAuthenticated() && isValidComment(request.resource.data);
+        allow delete: if isAuthenticated() && (resource.data.user_id == request.auth.uid || isAdmin());
+      }
     }
 
     // Default deny
