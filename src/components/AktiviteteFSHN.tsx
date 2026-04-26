@@ -28,19 +28,18 @@ export const AktiviteteFSHN = ({ user }: { user: User }) => {
   const [error, setError] = useState<string | null>(null);
   const [viewArchive, setViewArchive] = useState(false);
   const [newActivity, setNewActivity] = useState({
-    title: '',
     content: '',
-    type: 'EVENT',
-    duration: 'DAY',
-    link: ''
+    type: 'pyetje',
+    isImportant: false
   });
+  const [filter, setFilter] = useState<string>('all');
 
   useEffect(() => {
     setFetching(true);
     const q = query(
       collection(db, 'student_activities'), 
       orderBy('created_at', 'desc'),
-      limit(100)
+      limit(50)
     );
     
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -82,34 +81,25 @@ export const AktiviteteFSHN = ({ user }: { user: User }) => {
 
   const handleAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newActivity.title.trim() || !newActivity.content.trim()) return;
+    if (!newActivity.content.trim()) return;
     setLoading(true);
 
     try {
-      const now = new Date();
-      const expiresAt = new Date();
-      
-      switch (newActivity.duration) {
-        case 'HOUR': expiresAt.setHours(now.getHours() + 1); break;
-        case 'DAY': expiresAt.setDate(now.getDate() + 1); break;
-        case 'WEEK': expiresAt.setDate(now.getDate() + 7); break;
-        case 'MONTH': expiresAt.setMonth(now.getMonth() + 1); break;
-      }
-
       await addDoc(collection(db, 'student_activities'), {
         user_id: auth.currentUser?.uid,
-        user_name: `${user.name} ${user.surname}`,
-        title: newActivity.title.trim(),
+        author: {
+          name: `${user.name} ${user.surname || ''}`.trim(),
+          role: user.role.toLowerCase()
+        },
         content: newActivity.content.trim(),
         type: newActivity.type,
-        duration: newActivity.duration,
-        link: newActivity.link.trim() || null,
+        is_important: user.role === 'TEACHER' || user.role === 'admin' ? newActivity.isImportant : false,
         created_at: serverTimestamp(),
-        expires_at: expiresAt
+        likes_count: 0
       });
 
       setShowAddForm(false);
-      setNewActivity({ title: '', content: '', type: 'EVENT', duration: 'DAY', link: '' });
+      setNewActivity({ content: '', type: 'pyetje', isImportant: false });
     } catch (err) {
       console.error("Error adding activity:", err);
       alert("Gabim gjatë publikimit. Provoni përsëri.");
@@ -152,43 +142,37 @@ export const AktiviteteFSHN = ({ user }: { user: User }) => {
             <Zap size={24} fill="currentColor" />
           </div>
           <div>
-            <h3 className="text-xl font-black text-white tracking-tight">Aktivitete FSHN</h3>
+            <h3 className="text-xl font-black text-white tracking-tight">Aktivitetet FSHN</h3>
             <div className="flex items-center gap-2">
               <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
-              <p className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em]">Platforma Sociale Studentore</p>
+              <p className="text-[9px] text-slate-400 font-black uppercase tracking-[0.1em]">Një hapësirë akademike e përbashkët për diskutime dhe njoftime</p>
             </div>
           </div>
         </div>
         
         <div className="flex items-center gap-3 bg-white/5 p-1.5 rounded-2xl border border-white/5">
-          <button 
-            onClick={() => setViewArchive(false)}
-            className={`px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-              !viewArchive ? 'bg-indigo-600 text-white shadow-xl' : 'text-slate-400 hover:text-white'
-            }`}
+          <select 
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="bg-transparent text-[10px] font-black uppercase text-slate-400 outline-none px-4 cursor-pointer"
           >
-            Sot {todayActivities.length > 0 && `(${todayActivities.length})`}
-          </button>
-          <button 
-            onClick={() => setViewArchive(true)}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${
-              viewArchive ? 'bg-slate-700 text-white shadow-xl' : 'text-slate-400 hover:text-white'
-            }`}
-          >
-            <Archive size={14} />
-            Arkiva
-          </button>
+            <option value="all" className="bg-slate-900">Të gjitha</option>
+            <option value="njoftim" className="bg-slate-900">Njoftime</option>
+            <option value="detyrë" className="bg-slate-900">Detyra</option>
+            <option value="material" className="bg-slate-900">Materiale</option>
+            <option value="pyetje" className="bg-slate-900">Pyetje</option>
+          </select>
           
           <div className="w-px h-8 bg-white/10 mx-1" />
 
           <button 
             onClick={() => setShowAddForm(!showAddForm)}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-lg ${
-              showAddForm ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-emerald-600 text-white hover:bg-emerald-700'
+              showAddForm ? 'bg-rose-600 text-white hover:bg-rose-700' : 'bg-indigo-600 text-white hover:bg-emerald-700'
             }`}
           >
             {showAddForm ? <X size={14} /> : <Plus size={14} />}
-            {showAddForm ? 'Anulo' : 'Publiko'}
+            {showAddForm ? 'Anulo' : 'Posto'}
           </button>
         </div>
       </div>
@@ -205,23 +189,13 @@ export const AktiviteteFSHN = ({ user }: { user: User }) => {
               <form onSubmit={handleAdd} className="space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Titulli i Aktivitetit</label>
-                    <input 
-                      required
-                      maxLength={60}
-                      value={newActivity.title}
-                      onChange={(e) => setNewActivity({...newActivity, title: e.target.value})}
-                      placeholder="Psh: Turneu i Shahut, Grumbullim Ndihmash..."
-                      className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-sm font-bold focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all placeholder:text-slate-300"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Kategoria</label>
-                    <div className="grid grid-cols-3 gap-3">
+                    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Lloji i Postimit</label>
+                    <div className="grid grid-cols-2 gap-3">
                       {[
-                        { id: 'EVENT', label: 'NGJARJE', color: 'bg-orange-500' },
-                        { id: 'DONATION', label: 'DONACION', color: 'bg-rose-500' },
-                        { id: 'POLL', label: 'SONDAZH', color: 'bg-blue-500' }
+                        { id: 'njoftim', label: 'NJOFTIM', color: 'bg-indigo-500' },
+                        { id: 'detyrë', label: 'DETYRË', color: 'bg-rose-500' },
+                        { id: 'material', label: 'MATERIAL', color: 'bg-emerald-500' },
+                        { id: 'pyetje', label: 'PYETJE', color: 'bg-amber-500' }
                       ].map(t => (
                         <button
                           key={t.id}
@@ -244,68 +218,41 @@ export const AktiviteteFSHN = ({ user }: { user: User }) => {
                       ))}
                     </div>
                   </div>
+                  {(user.role === 'TEACHER' || user.role === 'admin') && (
+                    <div className="space-y-2">
+                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Opsione</label>
+                      <button
+                        type="button"
+                        onClick={() => setNewActivity({...newActivity, isImportant: !newActivity.isImportant})}
+                        className={`w-full py-4 rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 ${
+                          newActivity.isImportant ? 'bg-rose-50 text-rose-600 border-2 border-rose-100' : 'bg-slate-100 text-slate-400'
+                        }`}
+                      >
+                        <AlertCircle size={16} /> Mark si i Rëndësishëm
+                      </button>
+                    </div>
+                  )}
                 </div>
                 <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Përshkrimi i Hollësishëm</label>
+                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Përmbajtja</label>
                   <textarea 
                     required
-                    maxLength={500}
+                    maxLength={1000}
                     value={newActivity.content}
                     onChange={(e) => setNewActivity({...newActivity, content: e.target.value})}
                     rows={4}
-                    placeholder="Shkruani detajet këtu (data, ora, vendndodhja)..."
+                    placeholder="Shkruani mesazhin tuaj këtu..."
                     className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-sm font-medium focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all resize-none placeholder:text-slate-300"
                   />
-                  <p className="text-[10px] text-right text-slate-400 font-bold">{newActivity.content.length}/500</p>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Link i Jashtëm (Opsionale)</label>
-                  <input 
-                    type="url"
-                    value={newActivity.link}
-                    onChange={(e) => setNewActivity({...newActivity, link: e.target.value})}
-                    placeholder="https://example.com/me-shume-info"
-                    className="w-full px-5 py-4 bg-slate-50 border-2 border-slate-100 rounded-2xl text-sm font-medium focus:ring-4 focus:ring-indigo-100 focus:border-indigo-500 outline-none transition-all placeholder:text-slate-300"
-                  />
-                </div>
-                <div className="flex flex-col md:flex-row md:items-center justify-between gap-6 pt-2">
-                   <div className="flex items-center gap-6">
-                      <div className="space-y-2">
-                        <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Kohëzgjatja</label>
-                        <select 
-                          value={newActivity.duration}
-                          onChange={(e) => setNewActivity({...newActivity, duration: e.target.value})}
-                          className="w-full md:w-32 px-4 py-3 bg-slate-50 border-2 border-slate-100 rounded-2xl text-xs font-black outline-none focus:border-indigo-500 transition-all cursor-pointer"
-                        >
-                          <option value="HOUR">1 Orë</option>
-                          <option value="DAY">1 Ditë</option>
-                          <option value="WEEK">1 Javë</option>
-                          <option value="MONTH">1 Muaj</option>
-                        </select>
-                      </div>
-                      <div className="hidden md:block w-px h-12 bg-slate-100" />
-                      <div className="flex items-center gap-3">
-                         <div className="p-3 bg-indigo-50 rounded-2xl text-indigo-600">
-                            <UserIcon size={20} />
-                         </div>
-                         <div>
-                            <p className="text-[10px] font-black text-slate-400 uppercase leading-none">Publikuesi</p>
-                            <p className="text-sm font-bold text-slate-900 mt-1">{user.name} {user.surname}</p>
-                         </div>
-                      </div>
-                   </div>
+                <div className="flex justify-end">
                   <button 
                     type="submit"
                     disabled={loading}
-                    className="px-10 py-4 bg-indigo-600 text-white rounded-[1.5rem] text-sm font-black shadow-2xl shadow-indigo-200 hover:bg-indigo-700 hover:scale-[1.02] active:scale-[0.98] transition-all disabled:opacity-50 disabled:scale-100"
+                    className="px-12 py-4 bg-indigo-600 text-white rounded-[1.5rem] text-sm font-black shadow-2xl shadow-indigo-200 hover:bg-indigo-700 transition-all disabled:opacity-50"
                   >
-                    {loading ? (
-                      <div className="flex items-center gap-2">
-                        <Loader2 size={16} className="animate-spin" />
-                        DUKE PUBLIKUAR...
-                      </div>
-                    ) : 'PUBLIKO NJOFTIMIN'}
+                    POSTO TANI
                   </button>
                 </div>
               </form>
@@ -314,20 +261,21 @@ export const AktiviteteFSHN = ({ user }: { user: User }) => {
         )}
       </AnimatePresence>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 pb-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6 pb-6">
         <AnimatePresence mode="popLayout">
-          {currentDisplay.map((act) => (
-            <ActivityCard 
-              key={act.id} 
-              act={act} 
-              user={user} 
-              handleDelete={handleDelete}
-              viewArchive={viewArchive} 
-            />
-          ))}
+          {activities
+            .filter(act => filter === 'all' || act.type === filter)
+            .map((act) => (
+              <ActivityCard 
+                key={act.id} 
+                act={act} 
+                user={user} 
+                handleDelete={handleDelete}
+              />
+            ))}
         </AnimatePresence>
         
-        {currentDisplay.length === 0 && (
+        {activities.length === 0 && (
           <motion.div 
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
@@ -337,9 +285,9 @@ export const AktiviteteFSHN = ({ user }: { user: User }) => {
               <Zap size={32} className="opacity-20 text-indigo-600" />
             </div>
             <p className="text-sm font-black text-slate-900 uppercase tracking-widest mb-2">
-              {viewArchive ? 'Arkiva është e zbrazët' : 'Nuk ka aktivitete për sot'}
+              Nuk ka aktivitete në FSHN akoma.
             </p>
-            <p className="text-xs text-slate-400 font-bold uppercase tracking-tight">Krijo një njoftim të ri për të nisur rrjedhën</p>
+            <p className="text-xs text-slate-400 font-bold uppercase tracking-tight">Bëhu i pari që poston!</p>
           </motion.div>
         )}
       </div>
@@ -361,9 +309,18 @@ const ActivityCard = ({ act, user, handleDelete, viewArchive }: any) => {
     });
 
     // Listen for comments
-    const commentsQuery = query(collection(db, 'student_activities', act.id, 'comments'), orderBy('created_at', 'asc'));
+    const commentsQuery = collection(db, 'student_activities', act.id, 'comments');
     const commentsUnsubscribe = onSnapshot(commentsQuery, (snapshot) => {
-      setComments(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      const sortedComments = snapshot.docs
+        .map(doc => ({ id: doc.id, ...doc.data() }))
+        .sort((a: any, b: any) => {
+          const timeA = a.created_at?.toDate?.()?.getTime() || 0;
+          const timeB = b.created_at?.toDate?.()?.getTime() || 0;
+          return timeA - timeB;
+        });
+      setComments(sortedComments);
+    }, (err) => {
+      console.error("Error listening to comments:", err);
     });
 
     return () => {
@@ -383,7 +340,35 @@ const ActivityCard = ({ act, user, handleDelete, viewArchive }: any) => {
         user_id: auth.currentUser.uid,
         created_at: serverTimestamp()
       });
+
+      // Notification logic
+      if (act.user_id !== auth.currentUser.uid) {
+        await addDoc(collection(db, 'notifications'), {
+          user_id: act.user_id,
+          title: 'Pelqim i ri',
+          content: `${user.name} bëri like postimin tuaj.`,
+          type: 'LIKE',
+          is_read: false,
+          created_at: serverTimestamp()
+        });
+      }
     }
+  };
+
+  // Standardized error handler for Firestore
+  const handleFirestoreError = (error: any, operationType: string, path: string | null) => {
+    const errInfo = {
+      error: error instanceof Error ? error.message : String(error),
+      authInfo: {
+        userId: auth.currentUser?.uid,
+        email: auth.currentUser?.email,
+        emailVerified: auth.currentUser?.emailVerified,
+      },
+      operationType,
+      path
+    };
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+    return new Error(JSON.stringify(errInfo));
   };
 
   const handleAddComment = async (e: React.FormEvent) => {
@@ -391,26 +376,45 @@ const ActivityCard = ({ act, user, handleDelete, viewArchive }: any) => {
     if (!newComment.trim() || !auth.currentUser) return;
     setCommentLoading(true);
 
+    const path = `student_activities/${act.id}/comments`;
     try {
-      await addDoc(collection(db, 'student_activities', act.id, 'comments'), {
+      const commentData = {
         user_id: auth.currentUser.uid,
-        user_name: `${user.name} ${user.surname}`,
+        user_name: `${user.name} ${user.surname || ''}`.trim(),
         content: newComment.trim(),
         created_at: serverTimestamp()
-      });
+      };
+      
+      await addDoc(collection(db, 'student_activities', act.id, 'comments'), commentData);
+
+      // Notification logic
+      if (act.user_id !== auth.currentUser.uid) {
+        await addDoc(collection(db, 'notifications'), {
+          user_id: act.user_id,
+          title: 'Koment i ri',
+          content: `${user.name} komentoi në postimin tuaj.`,
+          type: 'COMMENT',
+          is_read: false,
+          created_at: serverTimestamp()
+        }).catch(err => console.warn("Notification failed, but comment was added:", err));
+      }
       setNewComment('');
-    } catch (err) {
-      console.error("Error adding comment:", err);
+    } catch (err: any) {
+      const formattedError = handleFirestoreError(err, 'create', path);
+      console.error(formattedError);
+      alert("Dështoi shtimi i komentit. Ju lutem kontrolloni të drejtat tuaja.");
     } finally {
       setCommentLoading(false);
     }
   };
 
   const deleteComment = async (commentId: string) => {
+    const path = `student_activities/${act.id}/comments/${commentId}`;
     try {
       await deleteDoc(doc(db, 'student_activities', act.id, 'comments', commentId));
-    } catch (err) {
-      console.error("Error deleting comment:", err);
+    } catch (err: any) {
+      handleFirestoreError(err, 'delete', path);
+      alert("Gabim gjatë fshirjes së komentit.");
     }
   };
 
@@ -422,18 +426,22 @@ const ActivityCard = ({ act, user, handleDelete, viewArchive }: any) => {
       initial={{ opacity: 0, scale: 0.9, y: 20 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.9, y: -20 }}
-      className={`group bg-white rounded-[2.5rem] p-6 shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all relative overflow-hidden flex flex-col border border-slate-100 ${viewArchive ? 'opacity-80 grayscale-[0.3]' : ''}`}
+      className={`group bg-white rounded-[2.5rem] p-6 shadow-sm hover:shadow-2xl hover:-translate-y-1 transition-all relative overflow-hidden flex flex-col border-2 ${
+        act.is_important ? 'border-rose-100 shadow-rose-100' : 'border-slate-100'
+      }`}
     >
       <div className="flex items-start justify-between mb-4 relative z-10">
-        <div className={`px-3 py-1 rounded-xl text-[10px] font-black tracking-widest uppercase ${
-          act.type === 'EVENT' ? 'bg-orange-50 text-orange-600 border border-orange-100' : 
-          act.type === 'DONATION' ? 'bg-rose-50 text-rose-600 border border-rose-100' : 
-          'bg-blue-50 text-blue-600 border border-blue-100'
+        <div className={`px-3 py-1 rounded-xl text-[10px] font-black tracking-widest uppercase flex items-center gap-2 ${
+          act.type === 'njoftim' ? 'bg-indigo-50 text-indigo-600' : 
+          act.type === 'detyrë' ? 'bg-rose-50 text-rose-600' : 
+          act.type === 'material' ? 'bg-emerald-50 text-emerald-600' :
+          'bg-amber-50 text-amber-600'
         }`}>
+          {act.is_important && <AlertCircle size={10} className="text-rose-600" />}
           {act.type}
         </div>
         
-        {act.user_id === auth.currentUser?.uid && (
+        {(act.user_id === auth.currentUser?.uid || user.role === 'admin' || user.role === 'TEACHER') && (
           <button 
             onClick={() => handleDelete(act.id)}
             className="p-2 text-slate-300 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-all"
@@ -444,23 +452,19 @@ const ActivityCard = ({ act, user, handleDelete, viewArchive }: any) => {
       </div>
 
       <div className="mb-4 relative z-10 flex-1">
-        <h4 className="text-sm font-black text-slate-900 mb-2 group-hover:text-indigo-600 transition-colors uppercase leading-tight line-clamp-2">{act.title}</h4>
-        <p className="text-[11px] text-slate-500 font-medium line-clamp-3 leading-relaxed mb-4">{act.content}</p>
-        
-        {act.link && (
-          <a 
-            href={act.link} 
-            target="_blank" 
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-50 text-indigo-600 rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-100 transition-all mb-4"
-          >
-            <ExternalLink size={12} />
-            Më shumë informacion
-          </a>
-        )}
+        <div className="flex items-center gap-2 mb-3">
+          <div className="w-8 h-8 bg-slate-100 rounded-full flex items-center justify-center text-slate-400 group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-all">
+            <UserIcon size={14} />
+          </div>
+          <div>
+            <p className="text-[10px] font-black text-slate-900 leading-none capitalize">{act.author?.name || act.user_name || 'Academic FSHN'}</p>
+            <p className="text-[8px] text-slate-400 font-bold uppercase mt-0.5">{act.author?.role || 'Sistemi'}</p>
+          </div>
+        </div>
+        <p className="text-sm text-slate-600 font-medium leading-relaxed mb-4 whitespace-pre-wrap">{act.content}</p>
       </div>
       
-      <div className="flex items-center justify-between py-4 border-y border-slate-50 relative z-10 mb-4">
+      <div className="flex items-center justify-between py-4 border-t border-slate-50 relative z-10">
         <div className="flex items-center gap-4">
           <button 
             onClick={toggleLike}
@@ -483,13 +487,9 @@ const ActivityCard = ({ act, user, handleDelete, viewArchive }: any) => {
           </button>
         </div>
 
-        <div className="flex items-center gap-2">
-          <div className="text-right">
-            <p className="text-[10px] font-black text-slate-900 truncate max-w-[80px]">{act.user_name}</p>
-            <p className="text-[9px] text-slate-400 font-bold">{act.created_at?.toDate?.() ? act.created_at.toDate().toLocaleDateString('sq-AL', { day: '2-digit', month: 'short' }) : 'Sapo'}</p>
-          </div>
-          <div className="w-8 h-8 bg-slate-50 rounded-xl flex items-center justify-center text-slate-400 border border-slate-100">
-            <UserIcon size={14} />
+        <div className="flex items-center gap-2 text-right">
+          <div>
+            <p className="text-[9px] text-slate-400 font-bold">{act.created_at?.toDate?.() ? act.created_at.toDate().toLocaleDateString('sq-AL', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Sapo'}</p>
           </div>
         </div>
       </div>
@@ -502,12 +502,12 @@ const ActivityCard = ({ act, user, handleDelete, viewArchive }: any) => {
             exit={{ opacity: 0, height: 0 }}
             className="overflow-hidden space-y-4"
           >
-            <div className="max-h-[200px] overflow-y-auto pr-2 custom-scrollbar space-y-3">
+            <div className="max-h-[200px] overflow-y-auto pr-2 custom-scrollbar space-y-3 pt-4">
               {comments.map((comment) => (
                 <div key={comment.id} className="bg-slate-50 p-3 rounded-2xl relative group/comment">
                   <div className="flex justify-between items-start mb-1">
                     <span className="text-[9px] font-black text-indigo-600 uppercase tracking-tighter">{comment.user_name}</span>
-                    {comment.user_id === auth.currentUser?.uid && (
+                    {(comment.user_id === auth.currentUser?.uid || user.role === 'admin' || user.role === 'TEACHER') && (
                       <button 
                         onClick={() => deleteComment(comment.id)}
                         className="opacity-0 group-hover/comment:opacity-100 text-rose-500 hover:text-rose-600 transition-opacity"
@@ -524,17 +524,18 @@ const ActivityCard = ({ act, user, handleDelete, viewArchive }: any) => {
               )}
             </div>
 
-            <form onSubmit={handleAddComment} className="relative">
+            <form onSubmit={handleAddComment} className="relative pb-2">
               <input 
                 value={newComment}
                 onChange={(e) => setNewComment(e.target.value)}
                 placeholder="Shkruaj një koment..."
+                maxLength={500}
                 className="w-full pl-4 pr-10 py-3 bg-slate-100 border-none rounded-xl text-[11px] font-bold outline-none focus:ring-2 focus:ring-indigo-100 transition-all placeholder:text-slate-400"
               />
               <button 
                 type="submit"
                 disabled={commentLoading || !newComment.trim()}
-                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-indigo-600 disabled:opacity-30"
+                className="absolute right-2 top-[calc(50%-4px)] -translate-y-1/2 p-1.5 text-indigo-600 disabled:opacity-30"
               >
                 {commentLoading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
               </button>

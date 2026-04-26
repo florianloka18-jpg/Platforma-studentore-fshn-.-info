@@ -877,7 +877,10 @@ app.get("/api/test-firestore", async (req, res) => {
 // Auth Middleware
 const authenticate = async (req: any, res: any, next: any) => {
     const token = req.headers.authorization?.split(" ")[1];
-    if (!token) return res.status(401).json({ error: "Pa autorizuar" });
+    if (!token) {
+      return res.status(401).json({ error: "Pa autorizuar" });
+    }
+    
     try {
       const decoded: any = jwt.verify(token, JWT_SECRET);
       
@@ -887,7 +890,10 @@ const authenticate = async (req: any, res: any, next: any) => {
         if (!userDoc.exists) {
           // If missing in Firestore but token is valid, check SQLite for auto-sync during migration
           user = db.prepare("SELECT * FROM users WHERE id = ?").get(decoded.id);
-          if (!user) return res.status(401).json({ error: "Përdoruesi nuk u gjet" });
+          if (!user) {
+            console.warn(`[AUTH] User ${decoded.id} not found in Firestore or SQLite.`);
+            return res.status(401).json({ error: "Përdoruesi nuk u gjet" });
+          }
           
           // Auto-sync missing user to new Firestore project
           try {
@@ -895,21 +901,25 @@ const authenticate = async (req: any, res: any, next: any) => {
               ...user,
               created_at: admin.firestore.FieldValue.serverTimestamp()
             });
-            console.log(`Auto-synced user ${user.id} to new Firestore project.`);
+            console.log(`[AUTH] Auto-synced user ${user.id} to Firestore.`);
           } catch (e) {
-            console.error("Auto-sync failed:", e);
+            console.error("[AUTH] Auto-sync failed:", e);
           }
         } else {
           user = { id: decoded.id, ...userDoc.data() };
         }
       } else {
         user = db.prepare("SELECT * FROM users WHERE id = ?").get(decoded.id);
-        if (!user) return res.status(401).json({ error: "Përdoruesi nuk u gjet" });
+        if (!user) {
+          console.warn(`[AUTH] User ${decoded.id} not found in SQLite.`);
+          return res.status(401).json({ error: "Përdoruesi nuk u gjet" });
+        }
       }
       
       req.user = user;
       next();
-    } catch (err) {
+    } catch (err: any) {
+      console.warn(`[AUTH] Token verification failed: ${err.message}`);
       res.status(401).json({ error: "Token i pavlefshëm" });
     }
   };
@@ -1988,7 +1998,7 @@ const notifyUser = async (userId: string|number, title: string, content: string,
   const ALBANIAN_DAYS = ['E Dielë', 'E Hënë', 'E Martë', 'E Mërkurë', 'E Enjte', 'E Premte', 'E Shtunë'];
 
   app.get("/api/dashboard/teacher", authenticate, async (req: any, res) => {
-    if (req.user.role !== 'TEACHER') return res.status(403).json({ error: "Pa autorizuar" });
+    if (req.user.role !== 'TEACHER' && req.user.role !== 'admin') return res.status(403).json({ error: "Pa autorizuar" });
     
     try {
       // 1. Current Lecture
@@ -2449,7 +2459,7 @@ const notifyUser = async (userId: string|number, title: string, content: string,
   });
 
   app.get("/api/dashboard/student", authenticate, async (req: any, res) => {
-    if (req.user.role !== 'STUDENT') return res.status(403).json({ error: "Pa autorizuar" });
+    if (req.user.role !== 'STUDENT' && req.user.role !== 'admin') return res.status(403).json({ error: "Pa autorizuar" });
 
     try {
       // 1. Stats & Analytics

@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "tsx server.ts",
     "build": "cross-env NODE_ENV=production vite build",
+    "deploy": "firebase deploy",
     "start": "node server.ts",
     "preview": "vite preview",
     "clean": "rm -rf dist",
@@ -29,7 +30,7 @@
     "firebase": "^12.9.0",
     "firebase-admin": "^13.7.0",
     "jsonwebtoken": "^9.0.3",
-    "jspdf": "^4.2.0",
+    "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
     "lightningcss": "^1.31.1",
     "lucide-react": "^0.546.0",

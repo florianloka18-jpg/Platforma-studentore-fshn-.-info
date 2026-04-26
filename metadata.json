@@ -1,6 +1,6 @@
 {
   "name": "Remix: DIGITAL STUDENT FSHN",
-  "description": "Platforma Studentore - Platformë gjithëpërfshirëse për studentët e FSHN, me sisteme testimi, prezence digjitale, chat, bibliotekë dhe analitikë.",
+  "description": "Platforma Studentore FSHN - Platformë gjithëpërfshirëse me sistem testimi, prezence digjitale, chat, bibliotekë dhe Dashboard Akademik FSHN në kohë reale.",
   "requestFramePermissions": [
     "camera",
     "microphone",

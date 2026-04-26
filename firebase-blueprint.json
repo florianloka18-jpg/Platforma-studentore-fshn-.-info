@@ -238,26 +238,94 @@
     },
     "StudentActivity": {
       "title": "StudentActivity",
-      "description": "Student posted activity/event/announcement",
+      "description": "Student academic activity feed post",
       "type": "object",
       "properties": {
         "user_id": { "type": "string" },
-        "user_name": { "type": "string" },
-        "title": { "type": "string" },
+        "author": {
+          "type": "object",
+          "properties": {
+            "name": { "type": "string" },
+            "role": { "type": "string", "enum": ["student", "teacher", "admin"] }
+          }
+        },
         "content": { "type": "string" },
-        "type": { "type": "string", "enum": ["EVENT", "DONATION", "POLL"] },
-        "duration": { "type": "string", "enum": ["HOUR", "DAY", "WEEK", "MONTH"] },
+        "type": { "type": "string", "enum": ["njoftim", "detyrë", "material", "pyetje"] },
+        "is_important": { "type": "boolean" },
         "created_at": { "type": "string", "format": "date-time" },
-        "expires_at": { "type": "string", "format": "date-time" },
-        "link": { "type": "string", "format": "uri" }
+        "likes_count": { "type": "number" }
       },
-      "required": ["user_id", "title", "content", "type", "duration", "created_at", "expires_at"]
+      "required": ["user_id", "content", "type", "created_at"]
+    },
+    "AcademicPerformance": {
+      "title": "AcademicPerformance",
+      "description": "Comprehensive academic data for a student",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "tests": {
+          "type": "array",
+          "items": { 
+            "type": "object",
+            "properties": {
+              "name": { "type": "string" },
+              "score": { "type": "number" },
+              "max": { "type": "number" },
+              "date": { "type": "string" }
+            }
+          }
+        },
+        "assignments": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "title": { "type": "string" },
+              "score": { "type": "number" },
+              "deadline": { "type": "string" },
+              "submitted": { "type": "boolean" }
+            }
+          }
+        },
+        "attendance": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "date": { "type": "string" },
+              "status": { "type": "string", "enum": ["Present", "Absent", "Late"] }
+            }
+          }
+        },
+        "updated_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id"]
+    },
+    "AcademicLog": {
+      "title": "AcademicLog",
+      "description": "A log of academic events for the student dashboard",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "type": { "type": "string", "enum": ["TEST", "ASSIGNMENT", "ATTENDANCE"] },
+        "message": { "type": "string" },
+        "created_at": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "type", "message", "created_at"]
     }
   },
   "firestore": {
     "/users/{userId}": {
       "schema": "User",
       "description": "User profiles"
+    },
+    "/academic_performance/{userId}": {
+      "schema": "AcademicPerformance",
+      "description": "Stores all performance metrics for a student"
+    },
+    "/academic_logs/{logId}": {
+      "schema": "AcademicLog",
+      "description": "Real-time log entries for academic dashboard updates"
     },
     "/classes/{classId}": {
       "schema": "Class",

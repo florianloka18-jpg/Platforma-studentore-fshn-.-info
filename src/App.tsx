@@ -115,6 +115,7 @@ import Library from './components/Library';
 import Classroom from './components/Classroom';
 import ClassroomWorkspace from './components/ClassroomWorkspace';
 import VerifyEmail from './components/VerifyEmail';
+import { AcademicDatabase } from './components/AcademicDatabase';
 
 const LiveQuestionModal = ({ question, onConfirm }: { question: any, onConfirm: () => void }) => {
   return (
@@ -234,9 +235,13 @@ const Header = ({ onMenuToggle }: { onMenuToggle?: () => void }) => {
     try {
       const data = await apiFetch('/api/notifications');
       setNotifications(data);
-    } catch (e) {
+    } catch (e: any) {
       if (e instanceof Error && e.message.includes('Keni bërë shumë kërkesa')) {
         // Silent fail for rate limit during background polling
+        return;
+      }
+      if (e?.message === "Seanca juaj ka skaduar. Ju lutem hyni përsëri.") {
+        // Silent fail as apiFetch already handled logout
         return;
       }
       console.error(e);
@@ -1894,10 +1899,10 @@ const Dashboard = () => {
 
   const fetchDashboardData = useCallback(async () => {
     try {
-      const endpoint = user?.role === 'TEACHER' ? '/api/dashboard/teacher' : '/api/dashboard/student';
+      const endpoint = (user?.role === 'TEACHER' || user?.role === 'admin') ? '/api/dashboard/teacher' : '/api/dashboard/student';
       const data = await apiFetch(endpoint);
       
-      if (user?.role === 'TEACHER') {
+      if (user?.role === 'TEACHER' || user?.role === 'admin') {
         setStats(data.stats);
         setCurrentLecture(data.currentLecture);
         setDailySchedules(data.dailySchedule);
@@ -1929,8 +1934,10 @@ const Dashboard = () => {
           };
         }));
       }
-    } catch (e) {
-      console.error("Dashboard fetch error:", e);
+    } catch (e: any) {
+      if (e?.message !== "Seanca juaj ka skaduar. Ju lutem hyni përsëri.") {
+        console.error("Dashboard fetch error:", e);
+      }
     } finally {
       setLoading(false);
     }
@@ -1940,35 +1947,45 @@ const Dashboard = () => {
     try {
       const data = await apiFetch('/api/study/active');
       setActiveSession(data);
-    } catch (e) { console.error(e); }
+    } catch (e: any) { 
+      if (e?.message !== "Seanca juaj ka skaduar. Ju lutem hyni përsëri.") console.error(e); 
+    }
   }, [apiFetch]);
 
   const fetchPersonalNotes = useCallback(async () => {
     try {
       const data = await apiFetch('/api/personal-notes');
       setPersonalNotes(data);
-    } catch (e) { console.error(e); }
+    } catch (e: any) { 
+      if (e?.message !== "Seanca juaj ka skaduar. Ju lutem hyni përsëri.") console.error(e); 
+    }
   }, [apiFetch]);
 
   const fetchActiveNotes = useCallback(async () => {
     try {
       const data = await apiFetch('/api/student/active-notes');
       setActiveNotes(data);
-    } catch (e) { console.error(e); }
+    } catch (e: any) { 
+      if (e?.message !== "Seanca juaj ka skaduar. Ju lutem hyni përsëri.") console.error(e); 
+    }
   }, [apiFetch]);
 
   const fetchDailyPresence = useCallback(async () => {
     try {
       const data = await apiFetch('/api/student/daily-presence');
       setDailyPresence(data);
-    } catch (e) { console.error(e); }
+    } catch (e: any) { 
+      if (e?.message !== "Seanca juaj ka skaduar. Ju lutem hyni përsëri.") console.error(e); 
+    }
   }, [apiFetch]);
 
   const fetchStudentHistory = useCallback(async () => {
     try {
       const data = await apiFetch('/api/student/history');
       setStudentHistory(data);
-    } catch (e) { console.error(e); }
+    } catch (e: any) { 
+      if (e?.message !== "Seanca juaj ka skaduar. Ju lutem hyni përsëri.") console.error(e); 
+    }
   }, [apiFetch]);
 
   const handleLectureStatus = useCallback(async (status: string) => {
@@ -2664,194 +2681,106 @@ const Dashboard = () => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        {dashboardStats.map((stat, i) => (
-          <motion.div 
-            key={i}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.1 }}
-            className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 relative group overflow-hidden"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <div className={`p-3 rounded-2xl ${stat.bg} ${stat.color} group-hover:scale-110 transition-transform`}>
-                <stat.icon size={26} />
-              </div>
-              <div className="flex flex-col items-end">
-                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter ${
-                  stat.trend === 'Live' || stat.trend === 'Real-time' ? 'bg-emerald-50 text-emerald-500 animate-pulse' : 'bg-slate-100 text-slate-500'
-                }`}>
-                  {stat.trend || 'Aktiv'}
-                </span>
-              </div>
-            </div>
-            <h3 className="text-slate-400 text-xs font-black uppercase tracking-[0.15em] mb-1">{stat.label}</h3>
-            <p className="text-3xl font-black text-slate-900 tabular-nums">{stat.value}</p>
-            <div className={`absolute bottom-0 left-0 h-1 transition-all duration-500 group-hover:w-full w-12 ${stat.color.replace('text-', 'bg-')}`}></div>
-          </motion.div>
-        ))}
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 relative overflow-hidden group">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-slate-50 rounded-full -mr-32 -mt-32 blur-3xl group-hover:bg-blue-50 transition-colors"></div>
-          <div className="relative z-10">
-            <div className="flex items-center justify-between mb-10">
-              <div>
-                <h3 className="text-2xl font-bold text-slate-900 tracking-tight">Përmbledhja e Performancës</h3>
-                <p className="text-slate-500 text-sm mt-1 font-medium">Analitika vizuale e progresit akademik</p>
-              </div>
-              <Link to="/analytics" className="px-5 py-2 bg-slate-50 text-blue-600 rounded-2xl text-sm font-bold border border-slate-100 hover:bg-blue-600 hover:text-white transition-all shadow-sm">
-                Shiko Detajet
-              </Link>
-            </div>
-            
-            <div className="flex justify-around items-end h-80 pb-6">
-              {(() => {
-                let data = [];
-                if (user?.role === 'TEACHER' && stats?.classProgress && stats.classProgress.length > 0) {
-                  // Show last 4 months of class progress
-                  data = stats.classProgress.slice(-4).map((p: any) => ({
-                    name: p.month?.includes('-') ? p.month.split('-')[1] : (p.month || 'Jan'), 
-                    value: (p.avg_perf || 0) * 100,
-                    color: 'bg-blue-500'
-                  }));
-                } else if (user?.role === 'STUDENT' && stats?.logs) {
-                  const studentLogs = stats.logs || [];
-                  data = [
-                    { name: 'Teste', value: (studentLogs.filter((l: any) => l.type === 'TEST').reduce((acc: number, curr: any) => acc + (curr.max_score > 0 ? (curr.score/curr.max_score) : 0), 0) / (studentLogs.filter((l: any) => l.type === 'TEST').length || 1)) * 100, color: 'bg-indigo-500' },
-                    { name: 'Detyra', value: (studentLogs.filter((l: any) => l.type === 'ASSIGNMENT').reduce((acc: number, curr: any) => acc + (curr.max_score > 0 ? (curr.score/curr.max_score) : 0), 0) / (studentLogs.filter((l: any) => l.type === 'ASSIGNMENT').length || 1)) * 100, color: 'bg-emerald-500' },
-                    { name: 'Pjesëmarrja', value: Math.min(100, ((stats?.attendance?.find((a: any) => a.status === 'PRESENT')?.count || 0) / 15) * 100), color: 'bg-sky-500' },
-                    { name: 'Total', value: studentLogs.length > 0 ? (studentLogs.reduce((acc: any, curr: any) => acc + (curr.max_score > 0 ? (curr.score/curr.max_score) : 0), 0) / studentLogs.length * 100) : 0, color: 'bg-rose-500' }
-                  ];
-                }
-                return data.map((d: any, i: number) => (
-                  <Progress3D key={i} value={d.value} label={d.name} color={d.color} delay={i * 0.2} />
-                ));
-              })()}
-            </div>
-
-            <div className="mt-6 flex flex-wrap gap-3 justify-center">
-               <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-100">
-                  <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Shkëlqyeshëm ({'>'}80%)</span>
-               </div>
-               <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-100">
-                  <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
-                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Mbi Mesataren ({'>'}60%)</span>
-               </div>
-            </div>
-          </div>
-        </div>
-        <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
-          <div className="flex items-center justify-between mb-8">
-            <h3 className="text-xl font-bold text-slate-900">Logu i Performancës</h3>
-            <span className="px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-[10px] font-black uppercase tracking-wider">Live</span>
-          </div>
-          <div className="space-y-6 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-            {stats?.logs?.map((act: any, i: number) => (
-              <ActivityItem 
-                key={act.id || i} 
-                act={act} 
-                onRefresh={fetchDashboardData}
-                apiFetch={apiFetch}
-              />
+      {/* Teacher Class Dashboard */}
+      {user?.role === 'TEACHER' && (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+            {dashboardStats.map((stat, i) => (
+              <motion.div 
+                key={i}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.1 }}
+                className="bg-white p-6 rounded-[2rem] shadow-sm border border-slate-100 relative group overflow-hidden"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <div className={`p-3 rounded-2xl ${stat.bg} ${stat.color} group-hover:scale-110 transition-transform`}>
+                    <stat.icon size={26} />
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <span className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase tracking-tighter ${
+                      stat.trend === 'Live' || stat.trend === 'Real-time' ? 'bg-emerald-50 text-emerald-500 animate-pulse' : 'bg-slate-100 text-slate-500'
+                    }`}>
+                      {stat.trend || 'Aktiv'}
+                    </span>
+                  </div>
+                </div>
+                <h3 className="text-slate-400 text-xs font-black uppercase tracking-[0.15em] mb-1">{stat.label}</h3>
+                <p className="text-3xl font-black text-slate-900 tabular-nums">{stat.value}</p>
+                <div className={`absolute bottom-0 left-0 h-1 transition-all duration-500 group-hover:w-full w-12 ${stat.color.replace('text-', 'bg-')}`}></div>
+              </motion.div>
             ))}
-            {(!stats?.logs || stats.logs.length === 0) && (
-              <div className="text-center py-10 space-y-3">
-                <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto text-slate-300">
-                  <Zap size={32} />
-                </div>
-                <p className="text-sm text-slate-400 italic">Nuk ka aktivitete të publikuara akoma.</p>
-              </div>
-            )}
           </div>
-        </div>
-      </div>
 
-      {/* Student Database / History Section */}
-      {user?.role === 'STUDENT' && studentHistory && (
-         <div className="space-y-10 pt-10 border-t border-slate-200">
-            <div className="text-center space-y-2">
-                <h3 className="text-3xl font-bold text-slate-900">Database-i Im Akademik</h3>
-                <p className="text-slate-500">Historia e plotë e performancës suaj në universitet</p>
-            </div>
-            
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-                {/* Presence History */}
-                <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
-                    <h4 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
-                        <CheckCircle size={20} className="text-green-500" />
-                        Historia e Prezencës
-                    </h4>
-                    <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                        {studentHistory.presence.map((h: any, i: number) => (
-                            <div key={i} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100">
-                                <div>
-                                    <p className="font-bold text-slate-900 text-sm">{h.subject}</p>
-                                    <p className="text-xs text-slate-500">{h.t_name} {h.t_surname}</p>
-                                </div>
-                                <div className="text-right">
-                                    <p className={`text-[10px] font-bold uppercase ${h.is_verified ? 'text-green-600' : 'text-blue-600'}`}>
-                                        {h.is_verified ? 'I Konfirmuar' : 'Në Pritje'}
-                                    </p>
-                                    <p className="text-[10px] text-slate-400 font-bold">{new Date(h.created_at).toLocaleDateString()}</p>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-2 bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100 relative overflow-hidden group">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-slate-50 rounded-full -mr-32 -mt-32 blur-3xl group-hover:bg-blue-50 transition-colors"></div>
+              <div className="relative z-10">
+                <div className="flex items-center justify-between mb-10">
+                  <div>
+                    <h3 className="text-2xl font-bold text-slate-900 tracking-tight">Përmbledhja e Performancës së Klasës</h3>
+                    <p className="text-slate-500 text-sm mt-1 font-medium">Analitika vizuale e progresit akademik të studentëve</p>
+                  </div>
+                  <Link to="/analytics" className="px-5 py-2 bg-slate-50 text-blue-600 rounded-2xl text-sm font-bold border border-slate-100 hover:bg-blue-600 hover:text-white transition-all shadow-sm">
+                    Shiko Detajet
+                  </Link>
+                </div>
+                
+                <div className="flex justify-around items-end h-80 pb-6">
+                  {stats?.classProgress?.slice(-4).map((p: any, i: number) => (
+                    <Progress3D 
+                      key={i} 
+                      value={(p.avg_perf || 0) * 100} 
+                      label={p.month?.includes('-') ? p.month.split('-')[1] : (p.month || 'Jan')} 
+                      color="bg-blue-500" 
+                      delay={i * 0.2} 
+                    />
+                  ))}
                 </div>
 
-                {/* Grade History (Tests & Homework) */}
-                <div className="space-y-8">
-                    <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
-                        <h4 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
-                            <Award size={20} className="text-orange-500" />
-                            Rezultatet e Testeve
-                        </h4>
-                        <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                            {studentHistory.testResults.map((t: any, i: number) => (
-                                <div key={i} className="flex items-center justify-between p-4 bg-orange-50/30 rounded-2xl border border-orange-100/50">
-                                    <div>
-                                        <p className="font-bold text-slate-900 text-sm">{t.title}</p>
-                                        <p className="text-xs text-slate-500">Pikët: {t.total_score}/{t.max_score}</p>
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 bg-white shadow-sm rounded-xl flex items-center justify-center font-bold text-orange-600">
-                                            {t.grade}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                            {studentHistory.testResults.length === 0 && <p className="text-center text-slate-400 italic text-sm">Nuk ka teste të vlerësuara akoma.</p>}
-                        </div>
-                    </div>
-
-                    <div className="bg-white p-8 rounded-[2.5rem] shadow-sm border border-slate-100">
-                        <h4 className="text-lg font-bold text-slate-900 mb-6 flex items-center gap-2">
-                            <FileText size={20} className="text-purple-500" />
-                            Vlerësimet e Detyrave
-                        </h4>
-                        <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                            {studentHistory.homeworkResults.map((h: any, i: number) => (
-                                <div key={i} className="flex items-center justify-between p-4 bg-purple-50/30 rounded-2xl border border-purple-100/50">
-                                    <div>
-                                        <p className="font-bold text-slate-900 text-sm">{h.title}</p>
-                                        <p className="text-xs text-slate-500">Pikët: {h.points}/{h.max_points}</p>
-                                    </div>
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 bg-white shadow-sm rounded-xl flex items-center justify-center font-bold text-purple-600">
-                                            {h.grade}
-                                        </div>
-                                    </div>
-                                </div>
-                            ))}
-                             {studentHistory.homeworkResults.length === 0 && <p className="text-center text-slate-400 italic text-sm">Nuk ka detyra të vlerësuara akoma.</p>}
-                        </div>
-                    </div>
+                <div className="mt-6 flex flex-wrap gap-3 justify-center">
+                   <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Shkëlqyeshëm ({'>'}80%)</span>
+                   </div>
+                   <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-50 rounded-xl border border-slate-100">
+                      <div className="w-2 h-2 rounded-full bg-indigo-500"></div>
+                      <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Mbi Mesataren ({'>'}60%)</span>
+                   </div>
                 </div>
+              </div>
             </div>
-         </div>
+            <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+              <div className="flex items-center justify-between mb-8">
+                <h3 className="text-xl font-bold text-slate-900">Logu i Performancës</h3>
+                <span className="px-3 py-1 bg-blue-50 text-blue-600 rounded-full text-[10px] font-black uppercase tracking-wider">Live</span>
+              </div>
+              <div className="space-y-6 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                {stats?.logs?.map((act: any, i: number) => (
+                  <ActivityItem 
+                    key={act.id || i} 
+                    act={act} 
+                    onRefresh={fetchDashboardData}
+                    apiFetch={apiFetch}
+                  />
+                ))}
+                {(!stats?.logs || stats.logs.length === 0) && (
+                  <div className="text-center py-10 space-y-3">
+                    <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto text-slate-300">
+                      <Zap size={32} />
+                    </div>
+                    <p className="text-sm text-slate-400 italic">Nuk ka aktivitete të publikuara akoma.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* NEW Real-time Academic Database */}
+      {user?.role === 'STUDENT' && (
+        <AcademicDatabase user={user} />
       )}
     </div>
   );
@@ -3166,9 +3095,11 @@ export default function App() {
         },
       });
 
-      if (res.status === 401 && !url.includes('/api/auth/login')) {
-        console.warn("Unauthorized request, logging out...");
-        logout();
+      if (res.status === 401 && !url.includes('/api/auth/')) {
+        if (token) {
+          console.warn(`[apiFetch] Unauthorized (401) on ${url}. Logging out.`);
+          logout();
+        }
         throw new Error("Seanca juaj ka skaduar. Ju lutem hyni përsëri.");
       }
 
@@ -3195,7 +3126,7 @@ export default function App() {
     } catch (e: any) {
       if (e.message === 'Failed to fetch') {
         console.error(`[apiFetch] CRITICAL NETWORK ERROR fetching ${url}: Server might be DOWN or unreachable.`, e);
-      } else {
+      } else if (e.message !== "Seanca juaj ka skaduar. Ju lutem hyni përsëri.") {
         console.error(`[apiFetch] Error fetching ${url}:`, e);
       }
       throw e;
@@ -3208,8 +3139,10 @@ export default function App() {
       const userData = await apiFetch('/api/user/me');
       setUser(userData);
       localStorage.setItem('user', JSON.stringify(userData));
-    } catch (error) {
-      console.error("Error refreshing user:", error);
+    } catch (error: any) {
+      if (error?.message !== "Seanca juaj ka skaduar. Ju lutem hyni përsëri.") {
+        console.error("Error refreshing user:", error);
+      }
     }
   }, [token, apiFetch]);
 
